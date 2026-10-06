@@ -1,7 +1,7 @@
 #ifndef KUROTFAA_FXH
 #define KUROTFAA_FXH
 
-// Phase 1 is restricted to SDR sRGB input. History stores linear RGB.
+// SDR sRGB input; persistent history stores linear RGB.
 float3 KuroDecode(float3 color)
 {
     float3 low = color / 12.92;

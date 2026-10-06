@@ -1,6 +1,7 @@
 # Local builds and dependencies
 /build/
 /dist/
+/dist-*/
 /work/
 /external/
 /runtime/
