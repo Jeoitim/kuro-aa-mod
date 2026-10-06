@@ -33,4 +33,6 @@ if((Get-FileHash -LiteralPath (Join-Path $root 'runtime-addon\ReShade64.dll')).H
 $licenseRoot=Join-Path $root 'reshade'
 New-Item -ItemType Directory -Path $licenseRoot | Out-Null
 Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/crosire/reshade/v6.8.0/LICENSE.md' -OutFile (Join-Path $licenseRoot 'LICENSE.md')
+git clone --depth 1 --branch v6.8.0 https://github.com/crosire/reshade.git (Join-Path $root 'reshade-sdk')
+if($LASTEXITCODE -ne 0){throw 'Native SDK fetch failed.'}
 Write-Output 'Fetched and checksum-verified fixed runtime dependencies; no installer executed.'

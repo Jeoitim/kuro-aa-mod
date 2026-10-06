@@ -16,6 +16,9 @@ New-Item -ItemType Directory -Path $baseline | Out-Null
 Copy-Item -LiteralPath (Join-Path $native 'smoke_ui.exe') -Destination $baseline
 Run-Fixture $baseline
 $raw=[IO.File]::ReadAllBytes((Join-Path $baseline 'smoke.bmp'))
+$signature=Select-String -LiteralPath (Join-Path $baseline 'stdout.log') -Pattern '^HUD pixel shader hash=([0-9a-f]+)$'
+if(!$signature){throw 'Fixture shader signature not found.'}
+$fixtureHash=$signature.Matches[0].Groups[1].Value
 $results=@()
 foreach($backend in @('dlss','fsr','xess','tfaa')) {
     $testRoot=Join-Path $root $backend
@@ -26,7 +29,7 @@ foreach($backend in @('dlss','fsr','xess','tfaa')) {
     $manager=Start-Process -FilePath (Join-Path $testRoot 'KuroMod.Manager.exe') -ArgumentList '--backend',$backend -WindowStyle Hidden -PassThru
     $handle=$manager.Handle; $manager.WaitForExit()
     if($manager.ExitCode -ne 0){throw 'Backend selection failed.'}
-    [IO.File]::WriteAllText((Join-Path $testRoot 'KuroUI.ini'),"[KuroUI]`nEnableEarlyAA=1`nEarlyUIShaderHash=9de9d1372e716633`nAllowOffscreenTarget=0`nCaptureCandidates=0`n")
+    [IO.File]::WriteAllText((Join-Path $testRoot 'KuroUI.ini'),"[KuroUI]`nEnableEarlyAA=1`nEarlyUIShaderHash=$fixtureHash`nAllowOffscreenTarget=0`nCaptureCandidates=0`n")
     Run-Fixture $testRoot
     $output=[IO.File]::ReadAllBytes((Join-Path $testRoot 'smoke.bmp'))
     if($output.Length -ne $raw.Length){throw 'Image dimensions changed.'}

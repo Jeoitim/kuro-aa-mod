@@ -2,9 +2,11 @@
 
 给 PC 云豹版《英雄传说：黎之轨迹》加上时域抗锯齿，主要改善转动镜头时头发、栏杆和远处细线的闪烁。
 
-可以选择 DLAA / DLSS、FSR、XeSS，或本项目的 TFAA。一次只使用一种，默认是 DLAA、原生分辨率、不锐化。无需单独运行 ReShade 安装器。
+可以选择 DLAA / DLSS、FSR、XeSS，或本项目的 TFAA。一次只使用一种，默认是 DLAA、原生分辨率、0.05 弱锐化。无需单独运行 ReShade 安装器。
 
-当前版本为 0.2.0，仍在测试。关闭 jitter 后，已反馈的镜头抖动得到解决；画面仍可能偏软，移动物体可能留有残影，操作响应也有待改善。
+当前版本为 0.3.0-scene，仍在测试。这一版将抗锯齿放到已识别的 UI 绘制之前：先处理场景，再让游戏绘制文字和菜单。实测反馈是文字明显改善、场景正常。它不靠矩形回填拼接画面。
+
+游戏 profile 目前验证了作者使用的云豹版 build 16257982，尚未覆盖所有战斗和 HUD 布局。某帧没有命中已识别的节点时，会保留整帧原画面，不会退回全屏 AA 再处理文字。因此未知布局可能暂时没有 Mod 抗锯齿。
 
 ## 安装
 
@@ -34,13 +36,16 @@
 | Resolution mode（分辨率模式） | Native AA，保持游戏原分辨率 |
 | 游戏内抗锯齿 | 关闭；使用 TFAA 时先保留 FXAA |
 | Scene jitter（画面抖动采样） | 关闭，目前开启它会导致镜头抖动 |
-| Protect interface（界面保护） | 开启 |
+| Scene mode → Process scene before UI | 开启，当前为实验性游戏 profile |
+| Legacy UI detection（旧的界面识别） | 场景模式下关闭 |
 | Motion quality（运动估计质量） | High |
-| Sharpening / Sharpness（锐化） | 默认 0；觉得偏软时从 0.05 开始试 |
+| Sharpening / Sharpness（锐化） | 默认 0.05；觉得有亮边时降到 0 |
 
 Motion quality 在 Home → AeonSR 面板里调整。它的 Balanced / High 控制运动估计质量，与分辨率模式里的 Balanced 不是同一个设置。
 
 独立管理器的 Apply 会保存配置，下次启动游戏时生效。用它切换算法或关闭注入前，先退出游戏。Neural Rendering 保持关闭即可。
+
+Scene mode 单独控制渲染插入位置。关闭它会回到旧的 Present 全屏处理路径，文字模糊和残影可能重新出现。诊断用的 Capture draw targets 默认关闭，开启它会造成 GPU 回读卡顿，不用于正常游玩或性能比较。
 
 ### 还要开游戏原生抗锯齿吗？
 
@@ -56,7 +61,7 @@ TFAA 则先用“游戏 FXAA + TFAA”。如果太软，再比较关闭 FXAA，�
 
 ### 画面有点软
 
-先确认只开了一种抗锯齿算法，再把锐化设为 0.05。可以在 0.03–0.08 之间试，暂时不建议超过 0.10。包里的默认值仍是 0。
+先确认只开了一种抗锯齿算法，再把锐化设为 0.05。可以在 0.03–0.08 之间试，暂时不建议超过 0.10。场景模式在 UI 绘制之前锐化，文字不经过这一步。
 
 锐化能让边缘看起来更清楚，但不能修复鬼影，也不会减少操作延迟。栏杆或文字出现亮边、光晕，或者闪烁变明显时，把锐化调低。别同时叠加驱动锐化、CAS / RCAS 和另一套 ReShade 锐化。
 
@@ -64,7 +69,7 @@ TFAA 则先用“游戏 FXAA + TFAA”。如果太软，再比较关闭 FXAA，�
 
 ### 移动时有鬼影
 
-先保留 High 运动估计质量和界面保护，保持 Native AA，再分别比较 DLAA、FSR Native AA、XeSS AA。三种算法都通过了独立运行测试，但还没有完成本游戏里的画质排名。
+先保留 High 运动估计质量和场景模式，保持 Native AA，再分别比较 DLAA、FSR Native AA、XeSS AA。三种算法都通过了独立运行测试，但还没有完成本游戏里的画质排名。
 
 使用 TFAA 时，可以先换 Balanced 预设。它比 Stable 少依赖历史画面，代价是可能多一些闪烁。进一步降低 `HistoryWeightMotion` 或 `TemporalStrength` 也可能减轻拖影，但会削弱稳定效果。这些参数只对 TFAA 生效，不能用来调整 DLAA、FSR 或 XeSS。
 
@@ -103,7 +108,7 @@ TFAA 则先用“游戏 FXAA + TFAA”。如果太软，再比较关闭 FXAA，�
 
 - 保持 jitter 关闭。当前这个实验选项会重新引入镜头抖动。
 - 一次只开一个时域算法。不要在 DLAA 输出上再叠加 TFAA。
-- 字幕或菜单有残影时先检查界面保护，别用更强的锐化掩盖。TFAA 还可以设置屏幕排除区域或 UI mask。
+- 字幕或菜单仍有残影时，确认 Scene mode 开启并记录具体界面，继续检查该布局的绘制节点；别用更强的锐化掩盖。矩形 / mask 只保留为手动后备，默认关闭。
 - HDR、MSAA 和全部战斗场景还没有完成验证。TFAA 在 HDR 下会直接输出原画面。
 - 笔记本上确认游戏和 Mod 使用同一块显卡。
 - 分享日志前检查私人路径等信息，仓库不会收录运行日志或存档。
@@ -112,28 +117,32 @@ TFAA 则先用“游戏 FXAA + TFAA”。如果太软，再比较关闭 FXAA，�
 
 作者目前使用 RTX 3060 Laptop GPU、驱动 610.88，在 1080p 下测试云豹版 DX11 游戏。这是作者的测试环境，不是推荐硬件或最低配置。
 
-DLAA 已在游戏里运行，关闭 jitter 后镜头抖动得到解决。FSR、XeSS 和 TFAA 也通过了独立 DX11 测试程序的运行检查。管理器、安装、关闭注入和卸载流程已有自动测试。
+DLAA 已在游戏里运行，关闭 jitter 后镜头抖动得到解决。0.3 场景模式已收到“文字明显改善、场景正常”的反馈。四种后端的独立测试都确认了场景被处理、随后绘制的文字不变；离屏目标和未命中节点的回退路径也通过测试。
 
 当前记录的额外 GPU 耗时约 4.6–5.8 ms，高于最初期望的 1–3 ms。这个数据不等于输入延迟，也不能代表其它设备上的表现。完整记录见[验证文档](docs/validation.md)。
 
 ## 构建说明
 
-需要 Windows 和 .NET Framework 4.x 的 C# 编译器。下载源码后，在项目目录运行：
+需要 Windows、.NET Framework 4.x 的 C# 编译器，以及 MSVC C++ 工具链和 Windows SDK。下载源码后，在项目目录运行：
 
 ```powershell
 ./tools/Fetch-Dependencies.ps1
+./tools/Build-NativeUI.ps1 -ReShadeSDK ./external/reshade-sdk
 ./tools/Build.ps1 -DependencyDirectory ./external
 ```
 
 输出在 `dist/GameFiles`。脚本下载固定版本并检查哈希，不会执行 ReShade 安装器。
 
-本项目编译自己的管理器。ReShade、AeonSR 和显卡厂商运行库使用上游发布文件；游戏启动时，ReShade 会编译 TFAA shader。源码仓库不包含这些第三方二进制，打包时会附上各自的许可。
+本项目编译自己的管理器和原生场景插入组件。ReShade、AeonSR 和显卡厂商运行库使用上游发布文件；游戏启动时，ReShade 会编译 TFAA shader。源码仓库不包含这些第三方二进制，打包时会附上各自的许可。
+
+原生组件也可使用本仓库 Windows workflow 的构建产物，通过 Build.ps1 的 `-NativeUIDirectory` 指定其目录。该组件需要 MSVC ABI，不能把 GCC 编译的 DLL 当作可安装版本。
 
 开发测试程序需要 C++17 编译器。离线 shader 验证使用 ReShade FX 解析器和 Microsoft D3DCompiler，具体实现见 `tools/Validate-Shaders.ps1`。
 
 想看更多细节：
 
 - [算法与阶段实现](docs/algorithm.md)
+- [场景与 UI 分离](docs/scene-ui-integration.md)
 - [调试方法](docs/debugging.md)
 - [TFAA 文件说明](KuroTFAA/README.md)
 - [早期技术路线评估](docs/technical-route.md)

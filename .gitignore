@@ -17,5 +17,15 @@
 .vs/
 ReShade.ini
 AeonSR.ini
+KuroUI.ini
+KuroUI-captures/
+KuroUI-draws.csv
+*.obj
+*.lib
+*.exp
+*.res
+*.bmp
+*.bin
 !packaging/ReShade.ini
 !packaging/AeonSR.ini
+!packaging/KuroUI.ini

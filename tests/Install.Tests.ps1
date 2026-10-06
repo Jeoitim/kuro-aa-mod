@@ -29,6 +29,11 @@ foreach($backend in @('dlss','fsr','xess','tfaa','off')) {
     if($backend -ne 'tfaa' -and $reshade -notmatch 'Native.ini') { throw 'Native preset exclusivity failed.' }
     if($aeon -notmatch '(?m)^SpatialJitter=0') { throw 'Jitter-free default was not preserved.' }
 }
+# Scene profile remains separate from backend choices and disables unknown-frame AA.
+if(Test-Path -LiteralPath (Join-Path $root 'KuroUI.ini')) {
+    $sceneConfig=Get-Content -LiteralPath (Join-Path $root 'KuroUI.ini') -Raw
+    if($sceneConfig -notmatch '(?m)^SkipUnmatchedFrames=1'){throw 'Unknown-frame bypass is not configured.'}
+}
 # Verify a crafted receipt cannot reach outside the intended game root.
 $receiptPath=Join-Path $root '.kuro-tfaa-install.json'
 $originalReceipt=[IO.File]::ReadAllText($receiptPath)

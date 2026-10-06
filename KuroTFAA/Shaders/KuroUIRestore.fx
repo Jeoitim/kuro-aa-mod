@@ -8,7 +8,7 @@ sampler2D ProcessedSampler { Texture = KuroUIProcessed; MinFilter = POINT; MagFi
 sampler2D MaskSampler { Texture = KuroUIMask; MinFilter = POINT; MagFilter = POINT; };
 
 uniform bool OriginalAvailable < hidden = true; nosave = true; > = false;
-uniform bool ProtectionEnabled < ui_label = "Protect UI (all AA backends)"; > = true;
+uniform bool ProtectionEnabled < ui_label = "Current-frame UI restoration (fallback)"; > = false;
 uniform bool BypassFullScreen < ui_label = "Bypass whole screen / menus"; > = false;
 uniform bool ProtectDialogue < ui_label = "Protect dialogue region (fallback)"; > = false;
 uniform float4 DialogueRegion < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.005;

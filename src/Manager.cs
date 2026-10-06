@@ -120,7 +120,7 @@ internal sealed class Manager : Form
         quality.SelectedIndex = Math.Max(0, Math.Min(q, 5));
         preset.SelectedIndex = activePreset.IndexOf("Sharp.ini", StringComparison.OrdinalIgnoreCase) >= 0 ? 2 : activePreset.IndexOf("Balanced.ini", StringComparison.OrdinalIgnoreCase) >= 0 ? 1 : 0;
         jitter.Text = "Scene jitter (experimental)"; jitter.Checked = aeon.ContainsKey("SpatialJitter") && aeon["SpatialJitter"] == "1";
-        ui.Text = "Protect interface"; ui.Checked = !aeon.ContainsKey("KeepInterface") || aeon["KeepInterface"] == "1";
+        ui.Text = "Legacy UI detection"; ui.Checked = !aeon.ContainsKey("KeepInterface") || aeon["KeepInterface"] == "1";
         jitter.AutoSize = true; ui.AutoSize = true;
         jitter.Anchor = AnchorStyles.Left; ui.Anchor = AnchorStyles.Left;
         sharp.DecimalPlaces = 2; sharp.Increment = 0.01m; sharp.Minimum = 0; sharp.Maximum = 0.30m; sharp.Dock = DockStyle.Left;
@@ -132,13 +132,44 @@ internal sealed class Manager : Form
         Button toggle = ButtonOf("Disable / enable", () => { Config.ToggleInjection(!File.Exists(Config.PathOf("dxgi.dll"))); status.Text = File.Exists(Config.PathOf("dxgi.dll")) ? "Injection enabled" : "Injection disabled"; });
         Button launch = ButtonOf("Launch game", () => { if (!File.Exists(Config.PathOf("ed9.exe"))) throw new FileNotFoundException("Place the Mod beside ed9.exe first."); Process.Start(new ProcessStartInfo(Config.PathOf("ed9.exe")) { WorkingDirectory = Config.Root, UseShellExecute = true }); });
         Button logs = ButtonOf("Diagnostics", () => { string path = Config.PathOf("AeonSR.log"); if (!File.Exists(path)) path = Config.PathOf("ReShade.log"); if (!File.Exists(path)) throw new FileNotFoundException("No runtime log yet."); Process.Start(path); });
-        actions.Controls.AddRange(new Control[] { apply, toggle, launch, logs }); layout.Controls.Add(actions, 0, 6); layout.SetColumnSpan(actions, 2);
+        Button sceneMode = ButtonOf("Scene mode", () => { using (var dialog = new SceneSettings()) dialog.ShowDialog(this); });
+        actions.Controls.AddRange(new Control[] { apply, toggle, launch, logs, sceneMode }); layout.Controls.Add(actions, 0, 6); layout.SetColumnSpan(actions, 2);
         status.Text = File.Exists(Config.PathOf("dxgi.dll")) ? "Injection enabled" : "Injection disabled"; status.AutoSize = true; status.Dock = DockStyle.Fill; layout.Controls.Add(status, 0, 7); layout.SetColumnSpan(status, 2);
         backend.SelectedIndexChanged += delegate { RefreshControls(); }; RefreshControls();
     }
     private void RefreshControls() { quality.Enabled = backend.SelectedIndex < 3; preset.Enabled = backend.SelectedIndex == 3; jitter.Enabled = backend.SelectedIndex < 3; ui.Enabled = backend.SelectedIndex < 3; sharp.Enabled = backend.SelectedIndex < 3; }
     private static void AddRow(TableLayoutPanel layout, int row, string label, Control control) { layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); layout.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row); layout.Controls.Add(control, 1, row); }
     private static Button ButtonOf(string label, Action action) { var button = new Button { Text = label, AutoSize = true, Height = 32, FlatStyle = FlatStyle.System }; button.Click += delegate { try { action(); } catch (Exception e) { MessageBox.Show(e.Message, "Kuro AA Mod", MessageBoxButtons.OK, MessageBoxIcon.Information); } }; return button; }
+}
+
+internal sealed class SceneSettings : Form
+{
+    private readonly CheckBox enabled = new CheckBox(), capture = new CheckBox();
+    internal SceneSettings()
+    {
+        Text = "Scene-only AA"; ClientSize = new Size(400, 160); FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false; MinimizeBox = false; StartPosition = FormStartPosition.CenterParent; Font = new Font("Segoe UI", 10);
+        var values = Config.Read(Config.PathOf("KuroUI.ini"));
+        enabled.Text = "Process scene before UI (experimental)"; enabled.AutoSize = true; enabled.Location = new Point(20,20);
+        enabled.Checked = values.ContainsKey("EnableEarlyAA") && values["EnableEarlyAA"] == "1";
+        capture.Text = "Capture draw targets for diagnostics"; capture.AutoSize = true; capture.Location = new Point(20,55);
+        capture.Checked = values.ContainsKey("CaptureCandidates") && values["CaptureCandidates"] == "1";
+        var apply = new Button { Text = "Apply", Location = new Point(290,105), Size = new Size(90,30) };
+        apply.Click += delegate {
+            try {
+                Config.RequireStopped();
+                if (!File.Exists(Config.PathOf("KuroUI.addon64"))) throw new FileNotFoundException("Native scene integration component is missing.");
+                Config.Set(Config.PathOf("KuroUI.ini"), "KuroUI", new Dictionary<string,string> {
+                    { "EnableEarlyAA", enabled.Checked ? "1" : "0" }, { "EarlyUIShaderHash", "23f7ff8def7a9871" },
+                    { "EarlyUIVertexShaderHash", "323e5c4e7ef5ce9" }, { "AllowOffscreenTarget", "1" },
+                    { "SkipUnmatchedFrames", "1" }, { "CaptureCandidates", capture.Checked ? "1" : "0" }
+                });
+                if (enabled.Checked) Config.Set(Config.PathOf("AeonSR.ini"), "AeonSR", new Dictionary<string,string> { { "KeepInterface","0" }, { "SpatialJitter","0" }, { "UpscaleEffects","0" } });
+                Close();
+            } catch(Exception e) { MessageBox.Show(e.Message,"Kuro AA Mod",MessageBoxButtons.OK,MessageBoxIcon.Information); }
+        };
+        Controls.AddRange(new Control[] { enabled,capture,apply });
+    }
 }
 
 internal static class Program
