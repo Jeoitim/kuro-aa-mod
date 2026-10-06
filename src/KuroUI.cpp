@@ -33,11 +33,12 @@ struct State {
     ID3D11ShaderResourceView *view=nullptr;
     D3D11_TEXTURE2D_DESC desc{};
     bool captured=false,in_present=false,early=false,trace=false,enabled=true;
-    uint64_t frame=0,early_count=0,early_hash=0;
+    uint64_t frame=0,early_count=0,early_hash=0,skipped_count=0;
     uint64_t early_vs=0;
     unsigned original_frame=0;
     unsigned draw_index=0;
     bool allow_offscreen=false;
+    bool skip_unmatched=true;
     bool capture_candidates=false;
     ID3D11Texture2D *pending_capture=nullptr;
     command_list *pending_command=nullptr;
@@ -81,6 +82,7 @@ void load_profile(State &s)
     s.early_hash=GetPrivateProfileIntW(L"KuroUI",L"EnableEarlyAA",0,ini.c_str()) ? std::wcstoull(hash,nullptr,16) : 0;
     GetPrivateProfileStringW(L"KuroUI",L"EarlyUIVertexShaderHash",L"0",hash,64,ini.c_str()); s.early_vs=std::wcstoull(hash,nullptr,16);
     s.allow_offscreen=GetPrivateProfileIntW(L"KuroUI",L"AllowOffscreenTarget",0,ini.c_str()) != 0;
+    s.skip_unmatched=GetPrivateProfileIntW(L"KuroUI",L"SkipUnmatchedFrames",1,ini.c_str()) != 0;
     s.capture_candidates=GetPrivateProfileIntW(L"KuroUI",L"CaptureCandidates",0,ini.c_str()) != 0;
 }
 void refresh(State &s)
@@ -120,6 +122,13 @@ void on_present(command_queue *queue,swapchain *chain,const rect*,const rect*,ui
         refresh(s); s.in_present=true; s.captured=false;
         if(s.frame==0) note("Kuro UI: settings read.");
         if(s.early) { available(s,false); continue; }
+        if(s.early_hash && s.skip_unmatched) {
+            // Preserve UI on unknown layouts instead of reverting to full-frame AA.
+            available(s,false); inside_early=true;
+            s.runtime->render_effects(queue->get_immediate_command_list(),{},{});
+            inside_early=false; ++s.skipped_count;
+            continue;
+        }
         if(!s.enabled) { available(s,false); continue; }
         auto *back=reinterpret_cast<ID3D11Texture2D*>(chain->get_current_back_buffer().handle);
         if(s.frame==0) note("Kuro UI: resolving native color target.");
@@ -166,7 +175,7 @@ void on_end(effect_runtime *runtime)
         if(variable.handle) { runtime->set_uniform_value_bool(variable,&bypass,1); runtime->save_current_preset(); }
     }
     if(s.frame % 300 == 0) {
-        note("Kuro UI: capture="+std::to_string(s.captured)+", enabled="+std::to_string(s.enabled)+", full-screen bypass="+std::to_string(flag(s,"BypassFullScreen",false))+", early frames="+std::to_string(s.early_count));
+        note("Kuro UI: capture="+std::to_string(s.captured)+", enabled="+std::to_string(s.enabled)+", full-screen bypass="+std::to_string(flag(s,"BypassFullScreen",false))+", early frames="+std::to_string(s.early_count)+", unmatched skipped="+std::to_string(s.skipped_count));
         if(s.trace) dump(s);
     }
     s.in_present=false; s.early=false; s.draw_index=0; ++s.frame;
@@ -257,9 +266,16 @@ bool draw(command_list *cmd,uint32_t vertices)
     Command c;
     { std::lock_guard<std::mutex> guard(lock); auto it=commands.find(cmd); if(it==commands.end()) return false; c=it->second; }
     if(!c.target.handle) return false;
+    bool depth_active=c.depth.handle!=0 && c.depth_test;
+    bool interested=false;
+    for(const auto &entry:states) {
+        const State &s=*entry.second;
+        interested |= s.runtime->get_device()==cmd->get_device() && !s.in_present
+            && (s.trace || (!s.early && s.early_hash==c.ps && !depth_active));
+    }
+    if(!interested) return false;
     auto resource=cmd->get_device()->get_resource_from_view(c.target);
     auto desc=cmd->get_device()->get_resource_desc(resource);
-    bool depth_active=c.depth.handle!=0 && c.depth_test;
     for(auto &entry:states) {
         State &s=*entry.second;
         if(s.runtime->get_device()!=cmd->get_device() || s.in_present) continue;

@@ -16,12 +16,15 @@
 
 static const char *Shader = R"(
 cbuffer Params : register(b0) { float shift; float frame; float2 unused; };
-struct V { float4 pos : SV_Position; float3 color : COLOR0; };
+Texture2D<float4> scene_texture : register(t0);
+SamplerState scene_sampler : register(s0);
+struct V { float4 pos : SV_Position; float3 color : COLOR0; float2 uv : TEXCOORD0; };
 V VS(uint id : SV_VertexID) {
     V v;
     float2 vertices[3] = { float2(-0.95,-0.85),float2(-0.1,0.90),float2(0.80,-0.80) };
     v.pos = float4(vertices[id] + float2(shift,0),0.4,1);
     v.color = id == 0 ? float3(0.85,0.16,0.25) : id == 1 ? float3(0.15,0.8,0.3) : float3(0.12,0.35,0.90);
+    v.uv=0;
     return v;
 }
 float4 PS(V input) : SV_Target {
@@ -30,8 +33,9 @@ float4 PS(V input) : SV_Target {
 }
 V VSFull(uint id : SV_VertexID) {
     V v; float2 uv=float2(id==2?2:0,id==1?2:0);
-    v.pos=float4(uv*float2(2,-2)+float2(-1,1),0,1); v.color=0; return v;
+    v.pos=float4(uv*float2(2,-2)+float2(-1,1),0,1); v.color=0; v.uv=uv; return v;
 }
+float4 PSCopy(V input) : SV_Target { return scene_texture.SampleLevel(scene_sampler,input.uv,0); }
 float4 PSHUD(V input) : SV_Target {
     int2 p=int2(input.pos.xy);
     if(p.x<20 || p.x>=620 || p.y<280 || p.y>=345) discard;
@@ -45,6 +49,7 @@ static void Check(HRESULT result,const char *what) { if (FAILED(result)) throw s
 int main(int argc,char **argv)
 {
     const int frames = argc > 1 ? std::atoi(argv[1]) : 600;
+    const bool offscreen=argc > 2 && std::strcmp(argv[2],"offscreen")==0;
     try {
         WNDCLASSW wc{}; wc.lpfnWndProc=DefWindowProcW; wc.hInstance=GetModuleHandleW(nullptr); wc.lpszClassName=L"KuroSmoke";
         RegisterClassW(&wc);
@@ -58,23 +63,33 @@ int main(int argc,char **argv)
         Check(D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&desc,&swap,&device,nullptr,&context),"device");
         ID3D11Texture2D *back=nullptr; Check(swap->GetBuffer(0,IID_PPV_ARGS(&back)),"backbuffer");
         ID3D11RenderTargetView *target=nullptr; Check(device->CreateRenderTargetView(back,nullptr,&target),"RTV");
+        ID3D11Texture2D *scene=nullptr; ID3D11RenderTargetView *sceneTarget=nullptr; ID3D11ShaderResourceView *sceneView=nullptr;
+        ID3D11SamplerState *sceneSampler=nullptr;
+        if(offscreen) {
+            D3D11_TEXTURE2D_DESC d{}; back->GetDesc(&d); d.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+            Check(device->CreateTexture2D(&d,nullptr,&scene),"scene texture"); Check(device->CreateRenderTargetView(scene,nullptr,&sceneTarget),"scene RTV"); Check(device->CreateShaderResourceView(scene,nullptr,&sceneView),"scene SRV");
+            D3D11_SAMPLER_DESC sampler{}; sampler.Filter=D3D11_FILTER_MIN_MAG_MIP_POINT; sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP; sampler.MaxLOD=D3D11_FLOAT32_MAX;
+            Check(device->CreateSamplerState(&sampler,&sceneSampler),"scene sampler");
+        }
         D3D11_TEXTURE2D_DESC depthDesc{}; depthDesc.Width=640; depthDesc.Height=360; depthDesc.MipLevels=1; depthDesc.ArraySize=1;
         depthDesc.Format=DXGI_FORMAT_D32_FLOAT; depthDesc.SampleDesc.Count=1; depthDesc.BindFlags=D3D11_BIND_DEPTH_STENCIL;
         ID3D11Texture2D *depth=nullptr; ID3D11DepthStencilView *dsv=nullptr;
         Check(device->CreateTexture2D(&depthDesc,nullptr,&depth),"depth"); Check(device->CreateDepthStencilView(depth,nullptr,&dsv),"DSV");
-        ID3DBlob *vsCode=nullptr,*psCode=nullptr,*hudVSCode=nullptr,*hudPSCode=nullptr,*errors=nullptr;
+        ID3DBlob *vsCode=nullptr,*psCode=nullptr,*hudVSCode=nullptr,*hudPSCode=nullptr,*copyCode=nullptr,*errors=nullptr;
         Check(D3DCompile(Shader,std::strlen(Shader),"smoke",nullptr,nullptr,"VS","vs_5_0",0,0,&vsCode,&errors),"vertex compile"); Release(errors);
         Check(D3DCompile(Shader,std::strlen(Shader),"smoke",nullptr,nullptr,"PS","ps_5_0",0,0,&psCode,&errors),"pixel compile"); Release(errors);
         Check(D3DCompile(Shader,std::strlen(Shader),"smoke",nullptr,nullptr,"VSFull","vs_5_0",0,0,&hudVSCode,&errors),"HUD vertex compile"); Release(errors);
         Check(D3DCompile(Shader,std::strlen(Shader),"smoke",nullptr,nullptr,"PSHUD","ps_5_0",0,0,&hudPSCode,&errors),"HUD pixel compile"); Release(errors);
+        Check(D3DCompile(Shader,std::strlen(Shader),"smoke",nullptr,nullptr,"PSCopy","ps_5_0",0,0,&copyCode,&errors),"copy pixel compile"); Release(errors);
         uint64_t hudHash=14695981039346656037ull;
         for(size_t i=0;i<hudPSCode->GetBufferSize();++i) { hudHash^=static_cast<const unsigned char*>(hudPSCode->GetBufferPointer())[i]; hudHash*=1099511628211ull; }
         std::cout << "HUD pixel shader hash=" << std::hex << hudHash << std::dec << "\n";
-        ID3D11VertexShader *vs=nullptr,*hudVS=nullptr; ID3D11PixelShader *ps=nullptr,*hudPS=nullptr;
+        ID3D11VertexShader *vs=nullptr,*hudVS=nullptr; ID3D11PixelShader *ps=nullptr,*hudPS=nullptr,*copyPS=nullptr;
         Check(device->CreateVertexShader(vsCode->GetBufferPointer(),vsCode->GetBufferSize(),nullptr,&vs),"VS");
         Check(device->CreatePixelShader(psCode->GetBufferPointer(),psCode->GetBufferSize(),nullptr,&ps),"PS");
         Check(device->CreateVertexShader(hudVSCode->GetBufferPointer(),hudVSCode->GetBufferSize(),nullptr,&hudVS),"HUD VS");
         Check(device->CreatePixelShader(hudPSCode->GetBufferPointer(),hudPSCode->GetBufferSize(),nullptr,&hudPS),"HUD PS");
+        Check(device->CreatePixelShader(copyCode->GetBufferPointer(),copyCode->GetBufferSize(),nullptr,&copyPS),"copy PS");
         D3D11_DEPTH_STENCIL_DESC hudDepthDesc{}; hudDepthDesc.DepthEnable=FALSE;
         ID3D11DepthStencilState *hudDepthState=nullptr; Check(device->CreateDepthStencilState(&hudDepthDesc,&hudDepthState),"HUD depth state");
         D3D11_BUFFER_DESC cbDesc{}; cbDesc.ByteWidth=16; cbDesc.Usage=D3D11_USAGE_DEFAULT; cbDesc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
@@ -86,12 +101,18 @@ int main(int argc,char **argv)
             MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
             float params[4]={0.12f*std::sin(i*0.012f),float(i),0,0}; context->UpdateSubresource(cb,0,nullptr,params,0,0);
             const float background[4]={0.09f,0.13f,0.18f,1};
-            context->OMSetRenderTargets(1,&target,dsv); context->ClearRenderTargetView(target,background); context->ClearDepthStencilView(dsv,D3D11_CLEAR_DEPTH,1,0);
+            ID3D11RenderTargetView *renderTarget=offscreen?sceneTarget:target;
+            context->OMSetRenderTargets(1,&renderTarget,dsv); context->ClearRenderTargetView(renderTarget,background); context->ClearDepthStencilView(dsv,D3D11_CLEAR_DEPTH,1,0);
             context->RSSetState(rs); context->RSSetViewports(1,&viewport); context->VSSetShader(vs,nullptr,0); context->PSSetShader(ps,nullptr,0);
             context->VSSetConstantBuffers(0,1,&cb); context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST); context->Draw(3,0);
-            context->OMSetDepthStencilState(hudDepthState,0); context->OMSetRenderTargets(1,&target,nullptr);
+            context->OMSetDepthStencilState(hudDepthState,0); context->OMSetRenderTargets(1,&renderTarget,nullptr);
             context->VSSetShader(hudVS,nullptr,0); context->PSSetShader(hudPS,nullptr,0);
             context->PSSetConstantBuffers(0,1,&cb); context->Draw(3,0);
+            if(offscreen) {
+                context->OMSetRenderTargets(1,&target,nullptr); context->PSSetShader(copyPS,nullptr,0);
+                context->PSSetShaderResources(0,1,&sceneView); context->PSSetSamplers(0,1,&sceneSampler); context->Draw(3,0);
+                ID3D11ShaderResourceView *empty=nullptr; context->PSSetShaderResources(0,1,&empty);
+            }
             Check(swap->Present(0,0),"Present"); Sleep(16);
             context->OMSetDepthStencilState(nullptr,0);
         }
@@ -109,7 +130,7 @@ int main(int argc,char **argv)
         std::ofstream bmp("smoke.bmp",std::ios::binary); bmp.write(reinterpret_cast<char*>(&file),sizeof(file)); bmp.write(reinterpret_cast<char*>(&info),sizeof(info)); bmp.write(reinterpret_cast<char*>(pixels.data()),pixels.size());
         std::cout << "Rendered " << frames << " frames, mean RGB=" << sum/(640*360*3) << "\n";
         if (sum/(640*360*3)<10) throw std::runtime_error("Blank GPU output");
-        context->ClearState(); context->Flush(); Release(stage); Release(cb); Release(rs); Release(vs); Release(ps); Release(hudVS); Release(hudPS); Release(hudVSCode); Release(hudPSCode); Release(hudDepthState); Release(vsCode); Release(psCode); Release(dsv); Release(depth); Release(target); Release(back); Release(swap); Release(context); Release(device); DestroyWindow(window);
+        context->ClearState(); context->Flush(); Release(stage); Release(cb); Release(rs); Release(vs); Release(ps); Release(hudVS); Release(hudPS); Release(copyPS); Release(copyCode); Release(scene); Release(sceneTarget); Release(sceneView); Release(sceneSampler); Release(hudVSCode); Release(hudPSCode); Release(hudDepthState); Release(vsCode); Release(psCode); Release(dsv); Release(depth); Release(target); Release(back); Release(swap); Release(context); Release(device); DestroyWindow(window);
         return 0;
     } catch(const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }
