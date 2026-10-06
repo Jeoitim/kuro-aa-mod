@@ -49,6 +49,7 @@ struct State {
 std::unordered_map<effect_runtime*,std::unique_ptr<State>> states;
 std::unordered_map<command_list*,Command> commands;
 std::unordered_map<uint64_t,Pipeline> pipelines;
+void finish_capture(command_list *cmd);
 
 void note(const std::string &text)
 {
@@ -111,6 +112,7 @@ void on_reload(effect_runtime *runtime)
 void on_present(command_queue *queue,swapchain *chain,const rect*,const rect*,uint32_t,const rect*)
 {
     if(queue->get_device()->get_api()!=device_api::d3d11) return;
+    finish_capture(queue->get_immediate_command_list());
     for(auto &entry:states) {
         State &s=*entry.second;
         if(s.runtime->get_device()!=queue->get_device() || s.runtime->get_current_back_buffer().handle!=chain->get_current_back_buffer().handle) continue;
@@ -266,7 +268,9 @@ bool draw(command_list *cmd,uint32_t vertices)
             auto &d=s.draws[key]; d.shader=c.ps; d.vertex_shader=c.vs; d.width=desc.texture.width; d.height=desc.texture.height; d.format=static_cast<unsigned>(desc.texture.format); d.depth=c.depth.handle!=0;
             if(!d.draws) d.first=s.draw_index;
             ++d.draws; d.vertices+=vertices; d.last=s.draw_index;
-            if(s.capture_candidates && s.frame % 300 == 100 && !c.depth_test && s.captured_keys.size()<12 && !s.captured_keys.count(key)) {
+            unsigned format=static_cast<unsigned>(desc.texture.format);
+            bool snapshot_format=format==28 || format==29 || format==27 || format==87 || format==91 || format==90;
+            if(s.capture_candidates && snapshot_format && s.frame % 300 == 100 && !c.depth_test && s.captured_keys.size()<12 && !s.captured_keys.count(key)) {
                 std::ostringstream name; name << std::hex << c.ps << "_" << c.vs << std::dec << "_" << desc.texture.width << "x" << desc.texture.height;
                 auto *texture=reinterpret_cast<ID3D11Texture2D*>(resource.handle);
                 s.captured_keys.insert(key);
