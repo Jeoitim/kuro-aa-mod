@@ -1,0 +1,32 @@
+name: Build native UI integration
+on:
+  workflow_dispatch:
+  push:
+    branches: [ui-scene-integration]
+    paths: ['src/KuroUI.cpp', 'tests/smoke_d3d11.cpp', '.github/workflows/native-ui.yml']
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned ReShade headers
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch v6.8.0 https://github.com/crosire/reshade.git sdk
+          if ($LASTEXITCODE) { throw 'SDK fetch failed' }
+      - name: Build with MSVC
+        shell: pwsh
+        run: |
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          & "$vsPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          New-Item -ItemType Directory artifacts | Out-Null
+          cl.exe /nologo /std:c++17 /EHsc /O2 /MT /LD /DNOMINMAX /DWIN32_LEAN_AND_MEAN /Isdk/include src/KuroUI.cpp /link /OUT:artifacts/KuroUI.addon64 d3d11.lib user32.lib
+          if ($LASTEXITCODE) { throw 'Native integration compilation failed' }
+          cl.exe /nologo /std:c++17 /EHsc /O2 /MT /DNOMINMAX /DWIN32_LEAN_AND_MEAN tests/smoke_d3d11.cpp /link /OUT:artifacts/smoke_ui.exe d3d11.lib dxgi.lib d3dcompiler.lib user32.lib
+          if ($LASTEXITCODE) { throw 'Fixture compilation failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-ui-msvc
+          path: artifacts/
