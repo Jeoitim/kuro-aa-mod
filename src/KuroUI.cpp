@@ -259,18 +259,19 @@ bool draw(command_list *cmd,uint32_t vertices)
     if(!c.target.handle) return false;
     auto resource=cmd->get_device()->get_resource_from_view(c.target);
     auto desc=cmd->get_device()->get_resource_desc(resource);
+    bool depth_active=c.depth.handle!=0 && c.depth_test;
     for(auto &entry:states) {
         State &s=*entry.second;
         if(s.runtime->get_device()!=cmd->get_device() || s.in_present) continue;
         if(s.trace) {
             ++s.draw_index;
             std::string key=std::to_string(c.ps)+":"+std::to_string(c.vs)+":"+std::to_string(desc.texture.width)+":"+std::to_string(desc.texture.height)+":"+std::to_string(c.depth.handle!=0);
-            auto &d=s.draws[key]; d.shader=c.ps; d.vertex_shader=c.vs; d.width=desc.texture.width; d.height=desc.texture.height; d.format=static_cast<unsigned>(desc.texture.format); d.depth=c.depth.handle!=0;
+            auto &d=s.draws[key]; d.shader=c.ps; d.vertex_shader=c.vs; d.width=desc.texture.width; d.height=desc.texture.height; d.format=static_cast<unsigned>(desc.texture.format); d.depth=depth_active;
             if(!d.draws) d.first=s.draw_index;
             ++d.draws; d.vertices+=vertices; d.last=s.draw_index;
             unsigned format=static_cast<unsigned>(desc.texture.format);
             bool snapshot_format=format==28 || format==29 || format==27 || format==87 || format==91 || format==90;
-            if(s.capture_candidates && snapshot_format && s.frame % 300 == 100 && !c.depth_test && s.captured_keys.size()<12 && !s.captured_keys.count(key)) {
+            if(s.capture_candidates && snapshot_format && s.frame % 300 == 100 && !depth_active && s.captured_keys.size()<12 && !s.captured_keys.count(key)) {
                 std::ostringstream name; name << std::hex << c.ps << "_" << c.vs << std::dec << "_" << desc.texture.width << "x" << desc.texture.height;
                 auto *texture=reinterpret_cast<ID3D11Texture2D*>(resource.handle);
                 s.captured_keys.insert(key);
@@ -279,7 +280,7 @@ bool draw(command_list *cmd,uint32_t vertices)
                 }
             }
         }
-        if(s.early || !s.early_hash || c.ps!=s.early_hash || c.depth_test) continue;
+        if(s.early || !s.early_hash || c.ps!=s.early_hash || depth_active) continue;
         if(s.early_vs && c.vs!=s.early_vs) continue;
         uint32_t width=0,height=0; s.runtime->get_screenshot_width_and_height(&width,&height);
         auto back=s.runtime->get_current_back_buffer(); auto backDesc=cmd->get_device()->get_resource_desc(back);
