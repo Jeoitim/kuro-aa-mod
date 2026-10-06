@@ -13,13 +13,14 @@ using System.Reflection;
 
 [assembly: AssemblyTitle("黎之轨迹抗锯齿设置")]
 [assembly: AssemblyProduct("Kuro AA Mod")]
-[assembly: AssemblyVersion("0.3.0.0")]
-[assembly: AssemblyFileVersion("0.3.0.0")]
+[assembly: AssemblyVersion("0.3.1.0")]
+[assembly: AssemblyFileVersion("0.3.1.0")]
 
 internal static class Config
 {
-    internal static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
-    internal static string PathOf(string relative) { return Path.Combine(Root, relative); }
+    internal static readonly string ModRoot = AppDomain.CurrentDomain.BaseDirectory;
+    internal static readonly string Root = Directory.GetParent(ModRoot.TrimEnd(Path.DirectorySeparatorChar)).FullName;
+    internal static string PathOf(string relative) { return Path.Combine(relative=="ed9.exe"||relative=="ReShade.ini"||relative.StartsWith("dxgi.dll")?Root:ModRoot, relative); }
     internal static void RequireStopped()
     {
         if (!File.Exists(PathOf("ed9.exe"))) return;
@@ -63,23 +64,19 @@ internal static class Config
         File.WriteAllLines(temp,lines,new UTF8Encoding(false));
         if (File.Exists(file)) File.Replace(temp,file,null); else File.Move(temp,file);
     }
-    internal static void SelectBackend(int backend,int quality,int preset,bool jitter,bool legacy,float sharpness)
+    internal static void SelectBackend(int backend,int quality,float sharpness,int motionQuality=1)
     {
         RequireStopped();
-        if (backend<0 || backend>4 || quality<0 || quality>5 || preset<0 || preset>2) throw new ArgumentException("抗锯齿选项无效。");
+        if (backend<0 || backend>4 || quality<0 || quality>5 || motionQuality<0 || motionQuality>1) throw new ArgumentException("抗锯齿选项无效。");
         if(float.IsNaN(sharpness) || float.IsInfinity(sharpness) || sharpness<0 || sharpness>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00。");
-        bool tfaa=backend==3, enabled=backend!=4;
-        bool scene=Flag(Read(PathOf("KuroUI.ini")),"EnableEarlyAA",false);
         Set(PathOf("AeonSR.ini"),"AeonSR",new Dictionary<string,string> {
-            {"Enabled",enabled && !tfaa ? "1":"0"}, {"Upscaler",tfaa || !enabled ? "3":backend.ToString()},
-            {"UpscaleMode",quality.ToString()}, {"SpatialJitter",jitter && !scene && enabled && !tfaa ? "1":"0"},
-            {"KeepInterface",legacy && !scene ? "1":"0"}, {"NeuralRender","0"}, {"UpscaleEffects","0"},
+            {"Enabled",backend==3 ? "0":"1"}, {"Upscaler",backend==4 ? "4294967295":backend.ToString()},
+            {"UpscaleMode",quality.ToString()}, {"SpatialJitter","0"}, {"InternalFlowQuality",motionQuality.ToString()},
+            {"KeepInterface","0"}, {"NeuralRender","0"}, {"UpscaleEffects","0"},
             {"Sharpness",sharpness.ToString(System.Globalization.CultureInfo.InvariantCulture)}
         });
-        string name=tfaa ? new[] {"Stable","Balanced","Sharp"}[preset] : "Native";
-        if(tfaa)Set(PathOf("KuroTFAA\\Presets\\"+name+".ini"),"KuroTFAA.fx",new Dictionary<string,string>{{"Sharpness",sharpness.ToString(System.Globalization.CultureInfo.InvariantCulture)}});
         Set(PathOf("ReShade.ini"),"GENERAL",new Dictionary<string,string> {
-            {"PresetPath",".\\KuroTFAA\\Presets\\"+name+".ini"}, {"StartupPresetPath",".\\KuroTFAA\\Presets\\"+name+".ini"}
+            {"PresetPath",".\\KuroAA\\Native.ini"}, {"StartupPresetPath",".\\KuroAA\\Native.ini"}
         });
     }
     internal static void SetScene(bool enabled,bool capture)
@@ -89,12 +86,8 @@ internal static class Config
         Set(PathOf("KuroUI.ini"),"KuroUI",new Dictionary<string,string> {
             {"EnableEarlyAA",enabled ? "1":"0"}, {"EarlyUIShaderHash","23f7ff8def7a9871"},
             {"EarlyUIVertexShaderHash","323e5c4e7ef5ce9"}, {"AllowOffscreenTarget","1"},
-            {"SkipUnmatchedFrames","1"}, {"CaptureCandidates",capture ? "1":"0"}
+            {"SkipUnmatchedFrames","1"}, {"TraceDraws",capture ? "1":"0"}, {"CaptureCandidates",capture ? "1":"0"}
         });
-        foreach (string preset in new[] {"Native","Stable","Balanced","Sharp"}) {
-            string path=PathOf("KuroTFAA\\Presets\\"+preset+".ini");
-            if (File.Exists(path)) Set(path,"KuroUIRestore.fx",new Dictionary<string,string> { {"TraceDraws",capture ? "1":"0"}, {"ProtectionEnabled","0"} });
-        }
         if (enabled) Set(PathOf("AeonSR.ini"),"AeonSR",new Dictionary<string,string> { {"KeepInterface","0"}, {"SpatialJitter","0"}, {"UpscaleEffects","0"} });
     }
     internal static void ToggleInjection(bool enabled)
@@ -173,6 +166,18 @@ internal sealed class SharpnessSlider : Control
     protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(BackColor);int y=Height/2,x=8+(Width-16)*Value/100;using(var pen=new Pen(Theme.Border,4))e.Graphics.DrawLine(pen,8,y,Width-8,y);using(var pen=new Pen(Enabled?Theme.Accent:Theme.Muted,4))e.Graphics.DrawLine(pen,8,y,x,y);using(var brush=new SolidBrush(Enabled?Theme.Accent:Theme.Muted))e.Graphics.FillEllipse(brush,x-7,y-7,14,14);if(Focused)using(var pen=new Pen(Theme.Muted))e.Graphics.DrawRectangle(pen,0,0,Width-1,Height-1);}
 }
 
+internal sealed class CenteredNumberBox : TextBox
+{
+    [StructLayout(LayoutKind.Sequential)] private struct TextRect {public int Left,Top,Right,Bottom;}
+    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window,int message,IntPtr wParam,ref TextRect rect);
+    internal CenteredNumberBox(){Multiline=true;AutoSize=false;Height=34;TextAlign=HorizontalAlignment.Center;AcceptsReturn=false;WordWrap=false;}
+    private void CenterText(){if(!IsHandleCreated)return;int line=TextRenderer.MeasureText("0.00",Font,Size.Empty,TextFormatFlags.NoPadding).Height;int top=Math.Max(0,(ClientSize.Height-line)/2+3);var rect=new TextRect{Left=3,Top=top,Right=ClientSize.Width-3,Bottom=Math.Min(ClientSize.Height,top+line)};SendMessage(Handle,0x00B4,IntPtr.Zero,ref rect);}
+    protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);CenterText();}
+    protected override void OnResize(EventArgs e){base.OnResize(e);CenterText();}
+    protected override void OnFontChanged(EventArgs e){base.OnFontChanged(e);CenterText();}
+    protected override void OnKeyPress(KeyPressEventArgs e){if(e.KeyChar=='\r'||e.KeyChar=='\n')e.Handled=true;base.OnKeyPress(e);}
+}
+
 internal sealed class DarkButton : Button
 {
     private bool hover;
@@ -188,14 +193,50 @@ internal sealed class DarkButton : Button
 }
 internal sealed class DarkCombo : ComboBox
 {
+    [StructLayout(LayoutKind.Sequential)] private struct Rect {public int Left,Top,Right,Bottom;}
+    [StructLayout(LayoutKind.Sequential)] private struct ComboInfo {public int Size;public Rect Item,Button;public int ButtonState;public IntPtr Combo,Edit,List;}
+    [DllImport("user32.dll")] private static extern bool GetComboBoxInfo(IntPtr window,ref ComboInfo info);
+    [DllImport("uxtheme.dll",CharSet=CharSet.Unicode)] private static extern int SetWindowTheme(IntPtr window,string application,string subId);
+    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window,int message,IntPtr wParam,IntPtr lParam);
+    private readonly PopupBackground popup=new PopupBackground();
+    internal DarkCombo(){SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);}
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);SetWindowTheme(Handle,"","");
+        var info=new ComboInfo{Size=Marshal.SizeOf(typeof(ComboInfo))};
+        if(GetComboBoxInfo(Handle,ref info)&&info.List!=IntPtr.Zero){SetWindowTheme(info.List,"","");popup.AssignHandle(info.List);}
+    }
+    protected override void OnHandleDestroyed(EventArgs e){popup.ReleaseHandle();base.OnHandleDestroyed(e);}
+    protected override void OnSelectedIndexChanged(EventArgs e){base.OnSelectedIndexChanged(e);Invalidate();}
+    protected override void OnDropDownClosed(EventArgs e){base.OnDropDownClosed(e);Invalidate();}
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.Clear(Theme.Surface);
+        TextRenderer.DrawText(e.Graphics,Text,Font,new Rectangle(10,0,Math.Max(0,Width-38),Height),Enabled?Theme.Text:Theme.Muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.SingleLine|TextFormatFlags.EndEllipsis);
+        using(var pen=new Pen(Focused?Theme.Accent:Theme.Border))e.Graphics.DrawRectangle(pen,0,0,Width-1,Height-1);
+        TextRenderer.DrawText(e.Graphics,"▾",Font,new Rectangle(Width-24,0,20,Height),Enabled?Theme.Text:Theme.Muted,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);
+    }
+    internal void VerifyPopupBackground()
+    {
+        CreateControl();var window=Handle;
+        if(popup.Handle==IntPtr.Zero)throw new Exception("下拉列表窗口初始化失败。");
+        using(var bitmap=new Bitmap(32,32))using(var graphics=Graphics.FromImage(bitmap)){
+            graphics.Clear(Color.White);var dc=graphics.GetHdc();
+            try{SendMessage(popup.Handle,0x0014,dc,IntPtr.Zero);}finally{graphics.ReleaseHdc(dc);}
+            if(bitmap.GetPixel(16,16).ToArgb()!=Theme.Surface.ToArgb())throw new Exception("下拉列表深色背景测试失败。");
+        }
+    }
     protected override void WndProc(ref Message m)
     {
+        if(m.Msg==0x0014){m.Result=new IntPtr(1);return;}
         base.WndProc(ref m);
-        if(m.Msg!=0x000F && m.Msg!=0x0318 && m.Msg!=0x0317)return;
-        using(var g=(m.Msg==0x000F || m.WParam==IntPtr.Zero)?Graphics.FromHwnd(Handle):Graphics.FromHdc(m.WParam)) {
-            using(var brush=new SolidBrush(Theme.Surface))g.FillRectangle(brush,Width-22,1,21,Height-2);
-            using(var pen=new Pen(Theme.Border))g.DrawRectangle(pen,0,0,Width-1,Height-1);
-            TextRenderer.DrawText(g,"▾",Font,new Rectangle(Width-22,0,20,Height),Enabled?Theme.Text:Theme.Muted,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);
+    }
+    private sealed class PopupBackground : NativeWindow
+    {
+        protected override void WndProc(ref Message m)
+        {
+            if(m.Msg==0x0014){if(m.WParam!=IntPtr.Zero)using(var graphics=Graphics.FromHdc(m.WParam))graphics.Clear(Theme.Surface);m.Result=new IntPtr(1);return;}
+            base.WndProc(ref m);
         }
     }
 }
@@ -218,58 +259,56 @@ internal class DarkForm : Form
 
 internal sealed class SettingsWindow : DarkForm
 {
-    private readonly ComboBox backend=Theme.Combo("NVIDIA DLAA / DLSS","AMD FSR","Intel XeSS","TFAA","关闭抗锯齿效果");
+    private readonly ComboBox backend=Theme.Combo("NVIDIA DLAA / DLSS","AMD FSR","Intel XeSS","关闭抗锯齿效果","按游戏显卡自动选择");
     private readonly ComboBox quality=Theme.Combo("DLAA","质量","均衡","性能","超级性能");
     private int[] qualityIds=new[]{0,2,3,4,5};
     private int qualityBackend=-1;
-    private readonly ComboBox preset=Theme.Combo("稳定","均衡","清晰");
-    private readonly CheckBox jitter=Theme.Check("启用抖动采样（实验）"), legacy=Theme.Check("使用旧版界面识别"), scene=Theme.Check("在界面绘制前处理场景"), capture=Theme.Check("采集绘制目标（诊断）");
+    private readonly ComboBox motionQuality=Theme.Combo("Balanced","High");
+    private readonly CheckBox scene=Theme.Check("在界面绘制前处理场景"), capture=Theme.Check("采集绘制目标（诊断）");
     private readonly SharpnessSlider sharp=new SharpnessSlider();
-    private readonly TextBox sharpValue=new TextBox{Text="0.05",BackColor=Theme.Surface,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle,TextAlign=HorizontalAlignment.Right};
+    private readonly TextBox sharpValue=new CenteredNumberBox{Text="0.00",BackColor=Theme.Surface,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle};
     private readonly Label status=Theme.LabelOf(""), sceneStatus=Theme.LabelOf("");
     private readonly Panel aaPage=new Panel(), scenePage=new Panel();
     private readonly Button aaTab=Theme.ButtonOf("抗锯齿"), uiTab=Theme.ButtonOf("场景与界面"), toggle=Theme.ButtonOf("关闭注入");
     private readonly ToolTip tips=new ToolTip();
     internal SettingsWindow()
     {
-        Text="黎之轨迹抗锯齿 Mod 设置";ClientSize=new Size(640,550);MinimumSize=new Size(656,589);StartPosition=FormStartPosition.CenterScreen;
+        Text="黎之轨迹抗锯齿 Mod 设置";ClientSize=new Size(640,460);MinimumSize=new Size(656,499);StartPosition=FormStartPosition.CenterScreen;
         var root=new TableLayoutPanel {Dock=DockStyle.Fill,Padding=new Padding(26,22,26,20),ColumnCount=1,RowCount=5};
         root.RowStyles.Add(new RowStyle(SizeType.Absolute,55));root.RowStyles.Add(new RowStyle(SizeType.Absolute,48));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,52));root.RowStyles.Add(new RowStyle(SizeType.Absolute,28));Controls.Add(root);
         var header=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2};header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));
-        header.Controls.Add(Theme.LabelOf("黎之轨迹抗锯齿",18,true),0,0);var version=Theme.LabelOf("0.3.0");version.ForeColor=Theme.Muted;header.Controls.Add(version,1,0);root.Controls.Add(header,0,0);
+        header.Controls.Add(Theme.LabelOf("黎之轨迹抗锯齿",18,true),0,0);var version=Theme.LabelOf("0.3.1");version.ForeColor=Theme.Muted;header.Controls.Add(version,1,0);root.Controls.Add(header,0,0);
         var tabs=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false};aaTab.Width=145;uiTab.Width=145;aaTab.FlatAppearance.BorderSize=0;uiTab.FlatAppearance.BorderSize=0;tabs.Controls.AddRange(new Control[]{aaTab,uiTab});root.Controls.Add(tabs,0,1);
         var pages=new Panel {Dock=DockStyle.Fill};aaPage.Dock=scenePage.Dock=DockStyle.Fill;pages.Controls.Add(aaPage);pages.Controls.Add(scenePage);root.Controls.Add(pages,0,2);
         var fields=Grid();aaPage.Controls.Add(fields);
         var sharpRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1};sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));sharp.Dock=DockStyle.Fill;sharpRow.Controls.Add(sharp,0,0);sharpValue.Anchor=AnchorStyles.Left|AnchorStyles.Right;sharpRow.Controls.Add(sharpValue,1,0);sharp.ValueChanged+=delegate{sharpValue.Text=(sharp.Value/100.0).ToString("0.00",System.Globalization.CultureInfo.InvariantCulture);};
         sharpValue.Leave+=delegate{decimal number;if(decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)&&number>=0&&number<=1)sharp.Value=(int)Math.Round(number*100);};
-        Row(fields,0,"抗锯齿算法",backend);Row(fields,1,"性能档位",quality);Row(fields,2,"TFAA 预设",preset);Row(fields,3,"锐化强度",sharpRow);Row(fields,4,"抖动采样",jitter);Row(fields,5,"界面识别",legacy);
+        Row(fields,0,"抗锯齿算法",backend);Row(fields,1,"性能档位",quality);Row(fields,2,"运动估计质量",motionQuality);Row(fields,3,"锐化强度",sharpRow);
         var sceneFields=Grid();scenePage.Controls.Add(sceneFields);Row(sceneFields,0,"场景渲染",scene);Row(sceneFields,1,"诊断采集",capture);Row(sceneFields,2,"游戏适配",Theme.LabelOf("云豹版 DX11 · 16257982"));Row(sceneFields,3,"未识别的界面",Theme.LabelOf("保留当前原画面"));Row(sceneFields,4,"当前状态",sceneStatus);
         var actions=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false,Padding=new Padding(0,6,0,0)};
         var save=Theme.ButtonOf("保存设置",true);var launch=Theme.ButtonOf("启动游戏");var logs=Theme.ButtonOf("查看日志");actions.Controls.AddRange(new Control[]{save,launch,toggle,logs});root.Controls.Add(actions,0,3);root.Controls.Add(status,0,4);
         aaTab.Click+=delegate{ShowTab(false);};uiTab.Click+=delegate{ShowTab(true);};backend.SelectedIndexChanged+=delegate{RefreshControls();};scene.CheckedChanged+=delegate{RefreshControls();};
-        save.Click+=delegate{Run(delegate{Config.RequireStopped();decimal number;if(!decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)||number<0||number>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00，推荐先试 0.03 到 0.08。");sharp.Value=(int)Math.Round(number*100);Config.SetScene(scene.Checked,capture.Checked);Config.SelectBackend(backend.SelectedIndex,qualityIds[Math.Max(0,quality.SelectedIndex)],preset.SelectedIndex,jitter.Checked,legacy.Checked,sharp.Value/100.0f);status.Text="设置已保存，下次启动游戏时生效。";status.ForeColor=Theme.Accent;});};
+        save.Click+=delegate{Run(delegate{Config.RequireStopped();decimal number;if(!decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)||number<0||number>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00，默认 0；需要时推荐 0.03 到 0.08。");sharp.Value=(int)Math.Round(number*100);Config.SetScene(scene.Checked,capture.Checked);Config.SelectBackend(backend.SelectedIndex,qualityIds[Math.Max(0,quality.SelectedIndex)],sharp.Value/100.0f,motionQuality.SelectedIndex);status.Text="设置已保存，下次启动游戏时生效。";status.ForeColor=Theme.Accent;});};
         toggle.Click+=delegate{Run(delegate{Config.ToggleInjection(!File.Exists(Config.PathOf("dxgi.dll")));RefreshStatus();});};
         launch.Click+=delegate{Run(delegate{if(!File.Exists(Config.PathOf("ed9.exe")))throw new FileNotFoundException("未找到 ed9.exe，请把设置器放在游戏目录中。");Process.Start(new ProcessStartInfo(Config.PathOf("ed9.exe")){WorkingDirectory=Config.Root,UseShellExecute=true});});};
         logs.Click+=delegate{Run(delegate{string path=Config.PathOf("KuroUI.log");if(!File.Exists(path))path=Config.PathOf("AeonSR.log");if(!File.Exists(path))throw new FileNotFoundException("还没有运行日志，请先启动一次游戏。");Process.Start(path);});};
-        tips.SetToolTip(jitter,"当前游戏开启后可能出现镜头抖动。");tips.SetToolTip(capture,"仅用于诊断，GPU 回读会造成卡顿。");tips.SetToolTip(scene,"使用已验证的绘制签名，只处理界面之前的场景。");tips.SetToolTip(toggle,"只切换本抗锯齿 Mod 的注入文件。");
-        tips.SetToolTip(sharpValue,"可填写 0.00–1.00；推荐 0.03–0.08；0 关闭锐化。");
+        tips.SetToolTip(capture,"仅用于诊断，GPU 回读会造成卡顿。");tips.SetToolTip(scene,"使用已验证的绘制签名，只处理界面之前的场景。");tips.SetToolTip(toggle,"只切换本抗锯齿 Mod 的注入文件。");
+        tips.SetToolTip(sharpValue,"可填写 0.00–1.00；默认 0；需要时推荐 0.03–0.08。");
         LoadSettings();ShowTab(false);RefreshControls();RefreshStatus();
     }
     private static TableLayoutPanel Grid()
     {
         var grid=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=6,Padding=new Padding(0,18,0,0)};grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,145));grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        for(int i=0;i<6;i++)grid.RowStyles.Add(new RowStyle(SizeType.Absolute,46));return grid;
+        for(int i=0;i<6;i++)grid.RowStyles.Add(new RowStyle(SizeType.Absolute,40));return grid;
     }
     private static void Row(TableLayoutPanel grid,int row,string name,Control control) {var label=Theme.LabelOf(name);label.ForeColor=Theme.Muted;grid.Controls.Add(label,0,row);grid.Controls.Add(control,1,row);}
     private void LoadSettings()
     {
-        var a=Config.Read(Config.PathOf("AeonSR.ini"));var r=Config.Read(Config.PathOf("ReShade.ini"));var s=Config.Read(Config.PathOf("KuroUI.ini"));
-        string active=r.ContainsKey("PresetPath")?r["PresetPath"]:"Native.ini";bool tfaa=active.IndexOf("Native.ini",StringComparison.OrdinalIgnoreCase)<0;
-        int b=0,q=0;if(a.ContainsKey("Upscaler"))int.TryParse(a["Upscaler"],out b);if(a.ContainsKey("UpscaleMode"))int.TryParse(a["UpscaleMode"],out q);
-        backend.SelectedIndex=tfaa?3:!Config.Flag(a,"Enabled",true)?4:Math.Max(0,Math.Min(b,2));int qualityIndex=Array.IndexOf(qualityIds,q);quality.SelectedIndex=qualityIndex>=0?qualityIndex:q==1&&qualityIds.Length>1?1:0;
-        preset.SelectedIndex=active.IndexOf("Sharp.ini",StringComparison.OrdinalIgnoreCase)>=0?2:active.IndexOf("Balanced.ini",StringComparison.OrdinalIgnoreCase)>=0?1:0;
-        jitter.Checked=Config.Flag(a,"SpatialJitter",false);legacy.Checked=Config.Flag(a,"KeepInterface",false);scene.Checked=Config.Flag(s,"EnableEarlyAA",true);capture.Checked=Config.Flag(s,"CaptureCandidates",false);
-        decimal value=0.05m;if(a.ContainsKey("Sharpness"))decimal.TryParse(a["Sharpness"],System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out value);sharp.Value=(int)(Math.Max(0,Math.Min(1.00m,value))*100);
+        var a=Config.Read(Config.PathOf("AeonSR.ini"));var s=Config.Read(Config.PathOf("KuroUI.ini"));
+        int b=4,q=0,flow=1;if(a.ContainsKey("Upscaler")&&!int.TryParse(a["Upscaler"],out b))b=4;if(a.ContainsKey("UpscaleMode"))int.TryParse(a["UpscaleMode"],out q);if(a.ContainsKey("InternalFlowQuality"))int.TryParse(a["InternalFlowQuality"],out flow);
+        backend.SelectedIndex=!Config.Flag(a,"Enabled",true)||b==3?3:b>=0&&b<3?b:4;int qualityIndex=Array.IndexOf(qualityIds,q);quality.SelectedIndex=qualityIndex>=0?qualityIndex:q==1&&qualityIds.Length>1?1:0;motionQuality.SelectedIndex=Math.Max(0,Math.Min(flow,1));
+        scene.Checked=Config.Flag(s,"EnableEarlyAA",true);capture.Checked=Config.Flag(s,"CaptureCandidates",false);
+        decimal value=0m;if(a.ContainsKey("Sharpness"))decimal.TryParse(a["Sharpness"],System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out value);sharp.Value=(int)(Math.Max(0,Math.Min(1.00m,value))*100);
     }
     private void RefreshControls()
     {
@@ -277,11 +316,10 @@ internal sealed class SettingsWindow : DarkForm
             if(qualityBackend==0){qualityIds=new[]{0,2,3,4,5};quality.Items.AddRange(new object[]{"DLAA","质量","均衡","性能","超级性能"});}
             else if(qualityBackend==1){qualityIds=new[]{0,2,3,4,5};quality.Items.AddRange(new object[]{"Native AA","质量","均衡","性能","超级性能"});}
             else if(qualityBackend==2){qualityIds=new[]{0,1,2,3,4,5};quality.Items.AddRange(new object[]{"Native AA","Ultra Quality","质量","均衡","性能","超级性能"});}
-            else{qualityIds=new[]{0};quality.Items.Add("不适用");}
+            else{qualityIds=new[]{0};quality.Items.Add(qualityBackend==4?"Native AA（自动）":"不适用");}
             int index=Array.IndexOf(qualityIds,mode);quality.SelectedIndex=index>=0?index:mode==1&&qualityIds.Length>1?1:0;
         }
-        bool vendor=backend.SelectedIndex>=0 && backend.SelectedIndex<3;quality.Enabled=vendor;preset.Enabled=backend.SelectedIndex==3;sharp.Enabled=sharpValue.Enabled=backend.SelectedIndex>=0 && backend.SelectedIndex<4;
-        jitter.Enabled=vendor && !scene.Checked;legacy.Enabled=vendor && !scene.Checked;
+        bool vendor=backend.SelectedIndex>=0 && backend.SelectedIndex!=3;quality.Enabled=vendor;motionQuality.Enabled=vendor;sharp.Enabled=sharpValue.Enabled=vendor;
         sceneStatus.Text=scene.Checked?"场景模式已开启":"旧版全屏处理";sceneStatus.ForeColor=scene.Checked?Theme.Accent:Theme.Muted;
     }
     private void RefreshStatus()
@@ -298,6 +336,7 @@ internal sealed class SettingsWindow : DarkForm
     internal void SelectSceneTab() {ShowTab(true);}
     internal void VerifyControls()
     {
+        ((DarkCombo)backend).VerifyPopupBackground();((DarkCombo)quality).VerifyPopupBackground();((DarkCombo)motionQuality).VerifyPopupBackground();
         for(int b=0;b<3;b++){
             backend.SelectedIndex=b;
             string native=b==0?"DLAA":"Native AA";
@@ -306,7 +345,8 @@ internal sealed class SettingsWindow : DarkForm
         }
         sharp.Value=100;if(sharp.Value!=100 || sharpValue.Text!="1.00")throw new Exception("锐化上限测试失败。");
         sharp.Value=0;if(sharp.Value!=0 || sharpValue.Text!="0.00")throw new Exception("锐化关闭测试失败。");
-        scene.Checked=true;RefreshControls();if(jitter.Enabled || legacy.Enabled)throw new Exception("场景模式选项互斥测试失败。");
+        backend.SelectedIndex=3;RefreshControls();if(motionQuality.Enabled||sharp.Enabled)throw new Exception("关闭状态测试失败。");
+        backend.SelectedIndex=4;RefreshControls();if(!motionQuality.Enabled||qualityIds[0]!=0)throw new Exception("自动选择测试失败。");
     }
     private void Run(Action action) {try{action();}catch(Exception e){DarkForm.Error(this,e.Message);}}
 }
@@ -328,7 +368,7 @@ internal static class Program
                 try{File.WriteAllText(path,"[GENERAL]\nKeep=42\n[AeonSR]\nEnabled=0\n");Config.Set(path,"AeonSR",new Dictionary<string,string>{{"Enabled","1"},{"Upscaler","2"}});var values=Config.Read(path);if(values["Keep"]!="42" || values["Enabled"]!="1" || values["Upscaler"]!="2")throw new Exception("配置保留测试失败。");}
                 finally{if(File.Exists(path))File.Delete(path);}Console.WriteLine("配置保留测试通过。");return 0;
             }
-            if(args.Length==2 && args[0]=="--backend") {int b=Array.IndexOf(new[]{"dlss","fsr","xess","tfaa","off"},args[1].ToLowerInvariant());Config.SelectBackend(b,0,0,false,false,0.05f);return 0;}
+            if(args.Length==2 && args[0]=="--backend") {int b=Array.IndexOf(new[]{"dlss","fsr","xess","off","auto"},args[1].ToLowerInvariant());Config.SelectBackend(b,0,0f);return 0;}
             if(args.Length==1 && (args[0]=="--disable" || args[0]=="--enable")){Config.ToggleInjection(args[0]=="--enable");return 0;}
             if(args.Length!=0)throw new ArgumentException("无法识别启动参数。");
             Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new SettingsWindow());return 0;

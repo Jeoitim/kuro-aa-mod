@@ -6,13 +6,12 @@
 
 int main(int argc, char **argv)
 {
-    if (argc != 4 && argc != 5) return 1;
+    if (argc != 4) return 1;
     reshadefx::preprocessor pp;
     pp.add_macro_definition("BUFFER_WIDTH", argv[2]);
     pp.add_macro_definition("BUFFER_HEIGHT", argv[3]);
     pp.add_macro_definition("__RESHADE__", "60000");
     pp.add_include_path(std::filesystem::path(argv[1]).parent_path());
-    if (argc == 5) pp.add_macro_definition("KURO_PHASE", argv[4]);
     if (!pp.append_file(argv[1])) { std::cerr << pp.errors(); return 2; }
     auto backend = std::unique_ptr<reshadefx::codegen>(
         reshadefx::create_codegen_dxbc(50, false, false, 1));

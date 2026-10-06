@@ -10,7 +10,9 @@ if (!(Test-Path -LiteralPath (Join-Path $gameRoot 'ed9.exe'))) { throw 'The sele
 foreach ($gameProcess in @(Get-Process ed9 -ErrorAction SilentlyContinue)) {
     if ([string]::Equals($gameProcess.Path,(Join-Path $gameRoot 'ed9.exe'),[StringComparison]::OrdinalIgnoreCase)) { throw 'Close the game before installation.' }
 }
-$receiptPath = Join-Path $gameRoot '.kuro-tfaa-install.json'
+$receiptPath = Join-Path $gameRoot '.kuro-aa-install.json'
+if(@(Get-ChildItem -LiteralPath $gameRoot -Filter '.kuro-*-install.json' -File).Count){throw 'Uninstall the existing version before installing.'}
+if(Test-Path -LiteralPath (Join-Path $gameRoot 'KuroAA')){throw 'Existing KuroAA directory will not be overwritten.'}
 if (Test-Path -LiteralPath $receiptPath) { throw 'This Mod is already installed. Uninstall it before reinstalling.' }
 foreach ($proxy in @('d3d11.dll','dxgi.dll.kuro-disabled')) {
     if (Test-Path -LiteralPath (Join-Path $gameRoot $proxy)) { throw "Existing injection file: $proxy" }
@@ -26,7 +28,7 @@ foreach ($file in $files) {
 }
 # A receipt is written before mutation and updated after every successful copy.
 # If copying fails, Uninstall.ps1 can remove the already-copied owned files.
-$receipt = [ordered]@{ Version=1; Package='Kuro AA 0.3.0'; Files=@() }
+$receipt = [ordered]@{ Version=1; Package='Kuro AA 0.3.1'; Files=@() }
 [IO.File]::WriteAllText($receiptPath,($receipt | ConvertTo-Json -Depth 5))
 foreach ($entry in $plan) {
     $target = Join-Path $gameRoot $entry.Path

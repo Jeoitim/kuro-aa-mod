@@ -29,13 +29,9 @@ struct Pipeline { uint64_t hash=0; bool depth_test=true; };
 struct DrawStat { uint64_t shader=0,vertex_shader=0; unsigned width=0,height=0,format=0; bool depth=false; unsigned draws=0,vertices=0,first=0,last=0; };
 struct State {
     effect_runtime *runtime=nullptr;
-    ID3D11Texture2D *raw=nullptr;
-    ID3D11ShaderResourceView *view=nullptr;
-    D3D11_TEXTURE2D_DESC desc{};
-    bool captured=false,in_present=false,early=false,trace=false,enabled=true;
+    bool in_present=false,early=false,trace=false;
     uint64_t frame=0,early_count=0,early_hash=0,skipped_count=0;
     uint64_t early_vs=0;
-    unsigned original_frame=0;
     unsigned draw_index=0;
     bool allow_offscreen=false;
     bool skip_unmatched=true;
@@ -45,7 +41,7 @@ struct State {
     std::string pending_name;
     std::unordered_set<std::string> captured_keys;
     std::unordered_map<std::string,DrawStat> draws;
-    ~State() { release(view); release(raw); release(pending_capture); }
+    ~State() { release(pending_capture); }
 };
 std::unordered_map<effect_runtime*,std::unique_ptr<State>> states;
 std::unordered_map<command_list*,Command> commands;
@@ -58,22 +54,6 @@ void note(const std::string &text)
     std::ofstream file(root / "KuroUI.log",std::ios::app);
     file << text << '\n';
 }
-bool flag(State &s,const char *name,bool fallback)
-{
-    auto variable=s.runtime->find_uniform_variable("KuroUIRestore.fx",name);
-    if(variable.handle) s.runtime->get_uniform_value_bool(variable,&fallback,1);
-    return fallback;
-}
-void available(State &s,bool value)
-{
-    auto variable=s.runtime->find_uniform_variable("KuroUIRestore.fx","OriginalAvailable");
-    if(variable.handle) s.runtime->set_uniform_value_bool(variable,&value,1);
-}
-void bind(State &s)
-{
-    resource_view view{reinterpret_cast<uintptr_t>(s.view)};
-    s.runtime->update_texture_bindings("KURO_UI_ORIGINAL",view,view);
-}
 void load_profile(State &s)
 {
     wchar_t hash[64]{};
@@ -84,11 +64,10 @@ void load_profile(State &s)
     s.allow_offscreen=GetPrivateProfileIntW(L"KuroUI",L"AllowOffscreenTarget",0,ini.c_str()) != 0;
     s.skip_unmatched=GetPrivateProfileIntW(L"KuroUI",L"SkipUnmatchedFrames",1,ini.c_str()) != 0;
     s.capture_candidates=GetPrivateProfileIntW(L"KuroUI",L"CaptureCandidates",0,ini.c_str()) != 0;
+    s.trace=GetPrivateProfileIntW(L"KuroUI",L"TraceDraws",0,ini.c_str()) != 0;
 }
 void refresh(State &s)
 {
-    s.enabled=flag(s,"ProtectionEnabled",true);
-    s.trace=flag(s,"TraceDraws",false);
     if(s.frame % 60 == 0) load_profile(s);
     bool active=false;
     for(const auto &entry:states) active |= entry.second->trace || entry.second->early_hash != 0;
@@ -99,17 +78,12 @@ void on_init(effect_runtime *runtime)
     if(runtime->get_device()->get_api()!=device_api::d3d11) return;
     auto state=std::make_unique<State>(); state->runtime=runtime; load_profile(*state);
     states[runtime]=std::move(state);
-    note("Kuro UI: DX11 current-frame protection initialized; early AA remains opt-in.");
+    note("Kuro AA: DX11 scene integration initialized.");
 }
 void on_destroy(effect_runtime *runtime)
 {
     auto it=states.find(runtime);
-    if(it!=states.end()) { runtime->update_texture_bindings("KURO_UI_ORIGINAL",{},{}); states.erase(it); }
-}
-void on_reload(effect_runtime *runtime)
-{
-    auto it=states.find(runtime); if(it==states.end()) return;
-    it->second->captured=false; bind(*it->second); available(*it->second,false);
+    if(it!=states.end()) states.erase(it);
 }
 void on_present(command_queue *queue,swapchain *chain,const rect*,const rect*,uint32_t,const rect*)
 {
@@ -119,34 +93,16 @@ void on_present(command_queue *queue,swapchain *chain,const rect*,const rect*,ui
         State &s=*entry.second;
         if(s.runtime->get_device()!=queue->get_device() || s.runtime->get_current_back_buffer().handle!=chain->get_current_back_buffer().handle) continue;
         if(s.frame==0) note("Kuro UI: first present reached.");
-        refresh(s); s.in_present=true; s.captured=false;
+        refresh(s); s.in_present=true;
         if(s.frame==0) note("Kuro UI: settings read.");
-        if(s.early) { available(s,false); continue; }
+        if(s.early) continue;
         if(s.early_hash && s.skip_unmatched) {
             // Preserve UI on unknown layouts instead of reverting to full-frame AA.
-            available(s,false); inside_early=true;
+            inside_early=true;
             s.runtime->render_effects(queue->get_immediate_command_list(),{},{});
             inside_early=false; ++s.skipped_count;
             continue;
         }
-        if(!s.enabled) { available(s,false); continue; }
-        auto *back=reinterpret_cast<ID3D11Texture2D*>(chain->get_current_back_buffer().handle);
-        if(s.frame==0) note("Kuro UI: resolving native color target.");
-        D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
-        // Exact restoration is currently restricted to SDR, single-sample textures.
-        if(desc.SampleDesc.Count!=1 || (desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format!=DXGI_FORMAT_B8G8R8A8_UNORM)) { available(s,false); continue; }
-        if(!s.raw || s.desc.Width!=desc.Width || s.desc.Height!=desc.Height || s.desc.Format!=desc.Format) {
-            release(s.view); release(s.raw);
-            auto *device=reinterpret_cast<ID3D11Device*>(queue->get_device()->get_native());
-            if(s.frame==0) note("Kuro UI: creating raw-color texture.");
-            s.desc=desc; desc.BindFlags=D3D11_BIND_SHADER_RESOURCE; desc.Usage=D3D11_USAGE_DEFAULT; desc.CPUAccessFlags=0; desc.MiscFlags=0;
-            if(FAILED(device->CreateTexture2D(&desc,nullptr,&s.raw)) || FAILED(device->CreateShaderResourceView(s.raw,nullptr,&s.view))) { available(s,false); continue; }
-            bind(s);
-            note("Kuro UI: original-color texture bound, " + std::to_string(desc.Width) + "x" + std::to_string(desc.Height));
-        }
-        auto *context=reinterpret_cast<ID3D11DeviceContext*>(queue->get_native());
-        context->CopyResource(s.raw,back);
-        s.captured=true; available(s,true);
     }
 }
 void dump(State &s)
@@ -164,18 +120,8 @@ void on_end(effect_runtime *runtime)
 {
     auto it=states.find(runtime); if(it==states.end()) return;
     State &s=*it->second;
-    if(runtime->is_key_pressed(VK_F7)) {
-        auto variable=runtime->find_uniform_variable("KuroUIRestore.fx","TraceDraws");
-        bool trace=!flag(s,"TraceDraws",false);
-        if(variable.handle) { runtime->set_uniform_value_bool(variable,&trace,1); runtime->save_current_preset(); }
-    }
-    if(runtime->is_key_pressed(VK_F8)) {
-        auto variable=runtime->find_uniform_variable("KuroUIRestore.fx","BypassFullScreen");
-        bool bypass=!flag(s,"BypassFullScreen",false);
-        if(variable.handle) { runtime->set_uniform_value_bool(variable,&bypass,1); runtime->save_current_preset(); }
-    }
     if(s.frame % 300 == 0) {
-        note("Kuro UI: capture="+std::to_string(s.captured)+", enabled="+std::to_string(s.enabled)+", full-screen bypass="+std::to_string(flag(s,"BypassFullScreen",false))+", early frames="+std::to_string(s.early_count)+", unmatched skipped="+std::to_string(s.skipped_count));
+        note("Kuro AA: early frames="+std::to_string(s.early_count)+", unmatched skipped="+std::to_string(s.skipped_count));
         if(s.trace) dump(s);
     }
     s.in_present=false; s.early=false; s.draw_index=0; ++s.frame;
@@ -303,7 +249,7 @@ bool draw(command_list *cmd,uint32_t vertices)
         if(desc.texture.width!=width || desc.texture.height!=height || desc.texture.samples!=1 || desc.texture.format!=backDesc.texture.format) continue;
         if(!s.allow_offscreen && resource.handle!=back.handle) continue;
         // Exact opt-in shader signature only. ReShade backs up and restores the draw state.
-        s.early=true; ++s.early_count; available(s,false); inside_early=true;
+        s.early=true; ++s.early_count; inside_early=true;
         s.runtime->render_effects(cmd,c.target,{});
         inside_early=false;
     }
@@ -314,8 +260,8 @@ bool on_indexed(command_list *cmd,uint32_t count,uint32_t instances,uint32_t,int
 void on_cmd_destroy(command_list *cmd) { std::lock_guard<std::mutex> guard(lock); commands.erase(cmd); }
 }
 extern "C" {
-__declspec(dllexport) const char *NAME="Kuro UI protection";
-__declspec(dllexport) const char *DESCRIPTION="Same-frame UI restoration and opt-in pre-UI AA for Kuro AA Mod";
+__declspec(dllexport) const char *NAME="Kuro AA scene integration";
+__declspec(dllexport) const char *DESCRIPTION="Pre-UI vendor antialiasing for Kuro AA Mod";
 }
 BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID)
 {
@@ -323,7 +269,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID)
         if(!register_addon(module)) return FALSE;
         wchar_t path[MAX_PATH]{}; GetModuleFileNameW(module,path,MAX_PATH); root=std::filesystem::path(path).parent_path();
         register_event<addon_event::init_effect_runtime>(on_init); register_event<addon_event::destroy_effect_runtime>(on_destroy);
-        register_event<addon_event::reshade_reloaded_effects>(on_reload); register_event<addon_event::present>(on_present);
+        register_event<addon_event::present>(on_present);
         register_event<addon_event::reshade_present>(on_end); register_event<addon_event::init_pipeline>(on_pipeline);
         register_event<addon_event::destroy_pipeline>(on_pipeline_destroy); register_event<addon_event::bind_pipeline>(on_bind);
         register_event<addon_event::bind_render_targets_and_depth_stencil>(on_targets); register_event<addon_event::draw>(on_draw);

@@ -1,0 +1,58 @@
+[
+  {
+    "Path": "aeonsr/AeonSR.addon64",
+    "SHA256": "b246f0558ace78aafb23f668003fc9c32cefefb367549adeeb4ab065ffa33166"
+  },
+  {
+    "Path": "aeonsr/AeonSRPrebuild.exe",
+    "SHA256": "c693975928b7ea000828d0e8b36c5a0e2be067a06ecf3be21579d4425c377842"
+  },
+  {
+    "Path": "aeonsr/Licenses/AeonSR_LICENSE.txt",
+    "SHA256": "9898445b1b677fb616a275ba94188e8ff003e9bc828e9cd4ca8cfce8cee885ff"
+  },
+  {
+    "Path": "aeonsr/Licenses/AMD_FidelityFX_LICENSE.md",
+    "SHA256": "f0da09d71ad5c82759a179e774535d4a829e5c96c49294167c1152402b2cb400"
+  },
+  {
+    "Path": "aeonsr/Licenses/Intel_XeSS_LICENSE.txt",
+    "SHA256": "784be42c39a4a4d03cf85d88e15e59d75828fca773ce45b8dbfffbd7eaf208df"
+  },
+  {
+    "Path": "aeonsr/Licenses/NVIDIA_DLSS_LICENSE.txt",
+    "SHA256": "3027f23ca5a46dd9cb8183fbd522983a86f64d7daac5982912bf9f214671f294"
+  },
+  {
+    "Path": "aeonsr/Licenses/THIRD-PARTY-NOTICES.md",
+    "SHA256": "2d6176d73030092aca2b1c90f885206e7eb8e4b9cd4db4c4f8827538d0ee4a31"
+  },
+  {
+    "Path": "aeonsr/runtime/amd_fidelityfx_loader_dx12.dll",
+    "SHA256": "e2d85aa05a9bd9ed8b38935fdf5199372cca6f74c12015143bb6f945ee1608aa"
+  },
+  {
+    "Path": "aeonsr/runtime/amd_fidelityfx_upscaler_dx12.dll",
+    "SHA256": "d0dcccc74a43c44ba435b7a369b456e0970d8a4464e4bd683119b374f2c9fb46"
+  },
+  {
+    "Path": "aeonsr/runtime/libxess_dx11.dll",
+    "SHA256": "c7cfe86f0c9d94e4fb3696d3cd5035e2bbb6a8b1b0572f8b7395a4cdfd0c625e"
+  },
+  {
+    "Path": "aeonsr/runtime/libxess.dll",
+    "SHA256": "251659dd84a3e84de67c886a4186e01f3eca49b00641906fe38bb6b807e5d5b7"
+  },
+  {
+    "Path": "aeonsr/runtime/nvngx_dlss.dll",
+    "SHA256": "3975567b8943c53acce397f2b72380092f84f162d00b0d2c7d08a1025c563983"
+  },
+  {
+    "Path": "reshade/dxgi.dll",
+    "SHA256": "0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7"
+  },
+  {
+    "Path": "reshade/LICENSE.md",
+    "SHA256": "d2bb5eb908e9aa7ac2f7f4cf6441d62e1f6ac1256cf22bb5289516c9f30e5f0a"
+  }
+]

@@ -2,7 +2,7 @@ name: Build native UI integration
 on:
   workflow_dispatch:
   push:
-    branches: [ui-scene-integration]
+    branches: [main, ui-scene-integration]
     paths: ['src/KuroUI.cpp', 'tests/smoke_d3d11.cpp', '.github/workflows/native-ui.yml']
 permissions:
   contents: read

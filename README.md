@@ -1,162 +1,99 @@
 # Kuro AA Mod
 
-给 PC 云豹版《英雄传说：黎之轨迹》加上时域抗锯齿，主要改善转动镜头时头发、栏杆和远处细线的闪烁。
+给 PC 云豹版《英雄传说：黎之轨迹》增加 DLAA、FSR Native AA 和 XeSS Native AA，主要改善转动镜头时头发、栏杆、建筑和远处细线的闪烁。
 
-可以选择 DLAA / DLSS、FSR、XeSS，或本项目的 TFAA。一次只使用一种，默认是 DLAA、原生分辨率、0.05 弱锐化。无需单独运行 ReShade 安装器。
+基于 AeonSR 估算运动信息，再调用显卡厂商的时域重建算法。它不是游戏原生集成，移动物体和透明特效仍可能出现残影，画面也可能偏软。
 
-当前版本为 0.3.0，仍在测试。这一版将抗锯齿放到已识别的 UI 绘制之前：先处理场景，再让游戏绘制文字和菜单。实测反馈是文字明显改善、场景正常。它不靠矩形回填拼接画面。
-
-![中文深色抗锯齿设置界面](docs/images/settings-0.3.0.png)
-
-游戏 profile 目前验证了作者使用的云豹版 build 16257982，尚未覆盖所有战斗和 HUD 布局。某帧没有命中已识别的节点时，会保留整帧原画面，不会退回全屏 AA 再处理文字。因此未知布局可能暂时没有 Mod 抗锯齿。
+项目最初源于实验性 ReShade TFAA，测试后转向效果更好的 AeonSR 厂商后端，早期自研实现已移除。
 
 ## 安装
 
-拿到便携包后：
+从 [Releases](https://github.com/Jeoitim/kuro-aa-mod/releases/latest) 下载 **0.3.1 便携包**。退出游戏，把包内 `GameFiles` 的内容复制到包含 `ed9.exe` 的目录，启动游戏即可。无需安装 ReShade 软件。
 
-1. 退出游戏，找到包含 `ed9.exe` 的文件夹。
-2. 把包内 `GameFiles` 文件夹里的内容全部复制进去。不要把 `GameFiles` 文件夹本身套在游戏目录里。
-3. 启动游戏。按 Home 打开 ReShade / AeonSR 设置；本抗锯齿 Mod 的中文设置器是 `KuroAA.Settings.exe`。
+已有本 Mod 时，先退出游戏并卸载现有版本。若目录已有其它 `dxgi.dll`、`d3d11.dll` 或 ReShade 配置，不要覆盖。
 
-如果目录里已经有 `dxgi.dll`、`d3d11.dll` 或另一套 ReShade，请先确认它们的用途，别直接覆盖。Mod 不需要修改游戏程序、原始资源或存档。
+安装后新增内容只有这三项：
 
-从 0.2 升级时，先退出游戏和旧设置器，用新版卸载脚本移除旧版，再安装 0.3。旧的 `KuroMod.Manager.exe` 已由 `KuroAA.Settings.exe` 替代，不需要保留两份设置程序。
+```text
+游戏目录/
+├─ dxgi.dll
+├─ ReShade.ini
+└─ KuroAA/
+   ├─ KuroAA.Settings.exe
+   ├─ AeonSR.addon64
+   ├─ KuroUI.addon64
+   ├─ AeonSRPrebuild.exe
+   ├─ AeonSR.ini / KuroUI.ini / Native.ini
+   ├─ runtime/
+   ├─ Shaders/
+   └─ Licenses/
+```
 
-便携包从 [GitHub Releases](https://github.com/Jeoitim/kuro-aa-mod/releases) 下载。若下载的是 GitHub 的源码 ZIP，需要先按文末的[构建说明](#构建说明)生成 `GameFiles`，源码不能直接作为便携包安装。
-
-也可以用安装脚本。它会检查同名文件，并记录这次添加的文件，方便以后卸载。下面的路径请换成自己的游戏目录和解压目录：
+也可以用脚本安装，它会记录本次新增文件，方便精确卸载：
 
 ```powershell
 ./tools/Install.ps1 -GameDirectory "<游戏目录>" -PackageDirectory "<解压目录>/GameFiles"
 ```
 
-## 先用这组设置
+## 设置
 
-显卡支持 DLAA 时，可以先这样设置；其他显卡可试 FSR Native AA 或 XeSS AA。不同显卡和驱动的结果可能不同，目前还没有完整的兼容性列表。
+打开 `KuroAA/KuroAA.Settings.exe`，退出游戏后保存设置，下次启动生效。设置器只管理本抗锯齿 Mod。Home 可打开 AeonSR 面板。
+
+![抗锯齿设置](docs/images/settings.png)
 
 | 设置 | 建议 |
 | --- | --- |
-| 抗锯齿算法 | 支持时选 NVIDIA DLAA / DLSS，否则试 FSR 或 XeSS |
-| 性能档位 | DLSS 选 DLAA；FSR / XeSS 选 Native AA，保持游戏原分辨率 |
-| 游戏内抗锯齿 | 关闭；使用 TFAA 时先保留 FXAA |
-| 抖动采样 | 关闭，目前开启它会导致镜头抖动 |
-| 场景与界面 → 在界面绘制前处理场景 | 默认开启，当前为实验性游戏适配 |
-| 使用旧版界面识别 | 场景模式下关闭 |
-| Motion quality（运动估计质量） | High |
-| 锐化强度 | 滑条或输入框调节，可填 0.00–1.00；默认 0.05 |
+| 支持 DLSS 的 NVIDIA 显卡 | NVIDIA DLAA / DLSS → DLAA |
+| AMD 显卡 | AMD FSR → Native AA |
+| Intel 显卡 | Intel XeSS → Native AA |
+| 自动选择 | 按游戏实际使用的 GPU 选择；不支持时手动换后端 |
+| 游戏内抗锯齿 | 先关闭，避免叠加后更软 |
+| 运动估计质量 | High |
+| 在界面绘制前处理场景 | 开启 |
+| 诊断采集 | 关闭 |
+| 锐化 | 默认 0；需要时先试 0.03–0.08 |
 
-Motion quality 在 Home → AeonSR 面板里调整。它的 Balanced / High 控制运动估计质量，与分辨率模式里的 Balanced 不是同一个设置。
+运动估计质量控制 AeonSR 的光流计算，影响提供给三个后端的运动信息。默认 High；帧率压力明显时可试 Balanced，若残影或细线闪烁加重就恢复 High。它与性能档位中的“均衡”不是同一设置。
 
-性能档位按后端显示：DLSS 为 DLAA、质量、均衡、性能、超级性能；FSR 为 Native AA、质量、均衡、性能、超级性能。XeSS 另提供 Ultra Quality，名称与对应模式保持一致。
+锐化滑条与输入框支持 **0.00–1.00**，步长 0.01。建议范围不是限制；强度过高容易出现亮边和细线闪烁。锐化不能修复鬼影或减少操作延迟。
 
-中文设置器点击“保存设置”后，下次启动游戏时生效。切换算法或关闭注入前，先退出游戏。ReShade / AeonSR 中的 Neural Rendering 保持关闭即可。
+DLSS 原生分辨率档位叫 DLAA，FSR / XeSS 叫 Native AA。其它档位为质量、均衡、性能和超级性能；XeSS 另有 Ultra Quality。它们会重建已渲染好的画面，不保证游戏减少渲染工作或提高帧率。本包不提供帧生成。
 
-“场景与界面”页控制渲染插入位置。关闭场景处理会回到旧的全屏处理路径，文字模糊和残影可能重新出现。“采集绘制目标”默认关闭，开启它会造成 GPU 回读卡顿，只用于诊断。
+Mod 默认先处理场景，再由游戏绘制 UI，文字不参与时域重建。未识别到适配节点的帧保留原画面，可能暂时没有 Mod 抗锯齿。当前 profile 验证于云豹版 build 16257982，尚未覆盖全部战斗和 HUD。
 
-### 还要开游戏原生抗锯齿吗？
+本游戏没有可靠的原生运动矢量或正确投影抖动输入。抖动配置保持关闭，以避免已观察到的镜头抖动；不能宣称效果等同游戏原生 DLAA / FSR / XeSS。鬼影明显时，保持 Native AA 和 High，逐个比较后端。HDR、MSAA 和完整输入延迟尚未验收。
 
-DLAA、FSR Native AA、XeSS AA，以及它们的超分模式，都建议先关闭游戏 AA。再叠加 FXAA 可能让画面更软。如果细线仍然闪烁，可以单独比较 FXAA 开启后的效果。
+## 关闭与卸载
 
-TFAA 则先用“游戏 FXAA + TFAA”。如果太软，再比较关闭 FXAA，或把 TFAA 预设从 Stable 换成 Balanced。
+退出游戏后，设置器可关闭效果，或“关闭注入”停止加载。普通 ReShade 效果开关不一定关闭 AeonSR。
 
-目前不建议叠加 MSAA 4×/8×，它的深度读取和性能还没有完成验证。SMAA 也不是本项目的默认组合。关闭 Mod 后，游戏自己的 AA 设置需要手动恢复。
+手动安装时，退出游戏后对照包内 `GameFiles` 删除 `dxgi.dll`、`ReShade.ini` 和整个 `KuroAA` 文件夹。关闭注入后，`dxgi.dll` 名称会变为 `dxgi.dll.kuro-disabled`，删除这份即可。只删除本包新增的内容，不动游戏文件或其它 Mod。
 
-## 画面与延迟调整
-
-每次只改一个设置，用同一存档、同一路线比较。尤其要看慢转镜头时的栏杆和头发，以及移动人物停下后是否还有残影。
-
-### 画面有点软
-
-锐化可填写 **0.00–1.00**，滑条步长为 0.01，也可以直接在旁边输入数值。0 表示关闭锐化，1 是本设置器开放的最高强度；DLAA / DLSS、FSR、XeSS 和 TFAA 均支持这个设置范围。
-
-建议从 0.05 开始，通常先在 **0.03–0.08** 之间比较。超过 0.10 仍然可以使用，但更容易出现亮边、光晕和细线闪烁，是否接受由玩家选择。建议范围不是输入限制。场景模式在 UI 绘制之前锐化，文字不经过这一步。
-
-锐化能让边缘看起来更清楚，但不能修复鬼影，也不会减少操作延迟。栏杆或文字出现亮边、光晕，或者闪烁变明显时，把锐化调低。别同时叠加驱动锐化、CAS / RCAS 和另一套 ReShade 锐化。
-
-游戏若有运动模糊选项，也可以暂时关闭它，看看模糊来自哪里。
-
-### 移动时有鬼影
-
-先保留 High 运动估计质量和场景模式，保持 Native AA，再分别比较 DLAA、FSR Native AA、XeSS AA。三种算法都通过了独立运行测试，但还没有完成本游戏里的画质排名。
-
-使用 TFAA 时，可以先换 Balanced 预设。它比 Stable 少依赖历史画面，代价是可能多一些闪烁。进一步降低 `HistoryWeightMotion` 或 `TemporalStrength` 也可能减轻拖影，但会削弱稳定效果。这些参数只对 TFAA 生效，不能用来调整 DLAA、FSR 或 XeSS。
-
-当前 Mod 从连续画面中估算运动，没有直接取得游戏提供的运动数据。头发、遮挡变化和透明特效比较容易估错，所以鬼影仍是待改善的问题。
-
-### 操作感觉迟缓
-
-先关闭 Mod，对比镜头转向和人物响应。有时感觉“慢”来自残影，有时是渲染时间变长；目前还没有测量完整的输入到显示延迟。
-
-可以依次试这些方法：
-
-- 临时对比垂直同步开/关。关闭后可能撕裂，比较完再选择合适的设置。
-- 支持可变刷新率、且游戏允许限帧时，把帧率限制在能持续稳定达到的水平，避免显卡长期满载。
-- 把 Motion quality 从 High 改为 Balanced。它可能更省时，但如果鬼影或细线闪烁加重，就恢复 High。
-- 保持 Native AA，换 FSR 或 XeSS 比较。当前还不能保证它们一定更快。
-
-本包没有启用帧生成，也没有集成 Reflex。把超分模式改成 Performance 不一定能降低延迟：这条通用注入路线会缩小已经渲染好的画面再重建，游戏本身不一定少做渲染工作。
-
-## 开关与卸载
-
-游戏内可以关闭 AeonSR 的 Enable upscaler，或取消勾选 TFAA。ReShade 的普通效果开关不一定会关闭 AeonSR，比较原画面时要确认选中的算法也关了。
-
-要彻底停止注入，退出游戏后打开 `KuroAA.Settings.exe`，点击“关闭注入”。它会将本包的 `dxgi.dll` 改名；点击“开启注入”即可恢复。这个设置器只管理本抗锯齿 Mod，不管理其它 Mod。
-
-用安装脚本安装的版本，可以这样卸载：
+`KuroAA` 内产生的日志和缓存可一起移除；根目录的 `ReShade.log` 可在退出游戏后删除。脚本安装另产生 `.kuro-aa-install.json`，用以下命令按记录卸载：
 
 ```powershell
 ./tools/Uninstall.ps1 -GameDirectory "<游戏目录>"
 ```
 
-脚本只删除安装记录里的文件，保留游戏文件、存档和日志。改动过的二进制文件会报错并保留，避免误删。
+脚本仅删除记录中的自有文件，保留游戏、存档和运行日志。改动过的二进制会报错并保留，防止误删。
 
-手动复制安装的版本，退出游戏后只移除这次新增的文件。不要顺手删除原有的注入器或其它 Mod。
+## 开发与验证
 
-## 使用时留意
+仓库内 `vendor/` 保存固定版本的 ReShade、AeonSR 和厂商运行库，附有许可、来源与 SHA256。克隆仓库后不必另找注入二进制。源码 ZIP 仍需构建，不是现成安装包。
 
-- 保持 jitter 关闭。当前这个实验选项会重新引入镜头抖动。
-- 一次只开一个时域算法。不要在 DLAA 输出上再叠加 TFAA。
-- 字幕或菜单仍有残影时，确认场景处理开启并记录具体界面，继续检查该布局的绘制节点；别用更强的锐化掩盖。矩形 / mask 只保留为手动后备，默认关闭。
-- HDR、MSAA 和全部战斗场景还没有完成验证。TFAA 在 HDR 下会直接输出原画面。
-- 笔记本上确认游戏和 Mod 使用同一块显卡。
-- 分享日志前检查私人路径等信息，仓库不会收录运行日志或存档。
-
-## 测试情况
-
-作者目前使用 RTX 3060 Laptop GPU、驱动 610.88，在 1080p 下测试云豹版 DX11 游戏。这是作者的测试环境，不是推荐硬件或最低配置。
-
-DLAA 已在游戏里运行，关闭 jitter 后镜头抖动得到解决。0.3 场景模式已收到“文字明显改善、场景正常”的反馈。四种后端的独立测试都确认了场景被处理、随后绘制的文字不变；离屏目标和未命中节点的回退路径也通过测试。
-
-当前记录的额外 GPU 耗时约 4.6–5.8 ms，高于最初期望的 1–3 ms。这个数据不等于输入延迟，也不能代表其它设备上的表现。完整记录见[验证文档](docs/validation.md)。
-
-## 构建说明
-
-需要 Windows、.NET Framework 4.x 的 C# 编译器，以及 MSVC C++ 工具链和 Windows SDK。下载源码后，在项目目录运行：
+Windows 构建需要 .NET Framework C# 编译器、MSVC 和 Windows SDK：
 
 ```powershell
 ./tools/Fetch-Dependencies.ps1
 ./tools/Build-NativeUI.ps1 -ReShadeSDK ./external/reshade-sdk
-./tools/Build.ps1 -DependencyDirectory ./external
+./tools/Build.ps1
 ```
 
-输出在 `dist/GameFiles`。脚本下载固定版本并检查哈希，不会执行 ReShade 安装器。
+输出为 `dist/GameFiles`。作者测试环境是 RTX 3060 Laptop GPU、驱动 610.88、1080p，不是推荐设备或最低配置。
 
-本项目编译自己的管理器和原生场景插入组件。ReShade、AeonSR 和显卡厂商运行库使用上游发布文件；游戏启动时，ReShade 会编译 TFAA shader。源码仓库不包含这些第三方二进制，打包时会附上各自的许可。
+[架构](docs/algorithm.md) · [验证记录](docs/validation.md) · [调试](docs/debugging.md) · [第三方文件](vendor/README.md)
 
-原生组件也可使用本仓库 Windows workflow 的构建产物，通过 Build.ps1 的 `-NativeUIDirectory` 指定其目录。该组件需要 MSVC ABI，不能把 GCC 编译的 DLL 当作可安装版本。
+## 许可
 
-开发测试程序需要 C++17 编译器。离线 shader 验证使用 ReShade FX 解析器和 Microsoft D3DCompiler，具体实现见 `tools/Validate-Shaders.ps1`。
-
-想看更多细节：
-
-- [算法与阶段实现](docs/algorithm.md)
-- [场景与 UI 分离](docs/scene-ui-integration.md)
-- [调试方法](docs/debugging.md)
-- [TFAA 文件说明](KuroTFAA/README.md)
-- [早期技术路线评估](docs/technical-route.md)
-
-## 上游与许可
-
-注入与多算法支持基于 [AeonSR v1.0.1](https://github.com/BarbatosAWLS/AeonSR/releases/tag/v1.0.1) 和 [ReShade 6.8.0](https://reshade.me/)，DLAA / DLSS、FSR、XeSS 使用各厂商的运行库。
-
-本项目原创部分采用 MIT 许可。第三方许可随便携包放在 `Licenses` 中。
+原创代码采用 MIT。第三方二进制不适用本项目 MIT，分别遵循随附许可，勿移除 `Licenses`。
+基于 [AeonSR v1.0.1](https://github.com/BarbatosAWLS/AeonSR/releases/tag/v1.0.1) 和 [ReShade 6.8.0](https://reshade.me/)。

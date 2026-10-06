@@ -28,4 +28,7 @@ KuroUI-draws.csv
 *.bin
 !packaging/ReShade.ini
 !packaging/AeonSR.ini
-!packaging/KuroUI.ini
+!packaging/Native.ini
+!vendor/**/*.dll
+!vendor/**/*.exe
+!vendor/**/*.addon64

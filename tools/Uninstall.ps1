@@ -5,10 +5,14 @@ if (!(Test-Path -LiteralPath (Join-Path $gameRoot 'ed9.exe'))) { throw 'The sele
 foreach ($gameProcess in @(Get-Process ed9 -ErrorAction SilentlyContinue)) {
     if ([string]::Equals($gameProcess.Path,(Join-Path $gameRoot 'ed9.exe'),[StringComparison]::OrdinalIgnoreCase)) { throw 'Close the game before uninstalling.' }
 }
-$receiptPath = Join-Path $gameRoot '.kuro-tfaa-install.json'
+$receiptPath = Join-Path $gameRoot '.kuro-aa-install.json'
+if(!(Test-Path -LiteralPath $receiptPath)){
+    $records=@(Get-ChildItem -LiteralPath $gameRoot -Filter '.kuro-*-install.json' -File)
+    if($records.Count -eq 1){$receiptPath=$records[0].FullName}
+}
 if (!(Test-Path -LiteralPath $receiptPath)) { throw 'No installation receipt. Refusing to remove unowned files.' }
 $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
-if ($receipt.Package -notin @('Kuro AA 0.2.0','Kuro AA 0.3.0-scene','Kuro AA 0.3.0') -or $receipt.Version -ne 1) { throw 'Unknown installation receipt.' }
+if ($receipt.Package -notin @('Kuro AA 0.2.0','Kuro AA 0.3.0-scene','Kuro AA 0.3.0','Kuro AA 0.3.1') -or $receipt.Version -ne 1) { throw 'Unknown installation receipt.' }
 $paths = @()
 foreach ($entry in $receipt.Files) {
     $path = [IO.Path]::GetFullPath((Join-Path $gameRoot $entry.Path))
@@ -22,4 +26,15 @@ foreach ($entry in $receipt.Files) {
 # No recursive deletion: remove only verified receipt entries, never game files or logs.
 foreach ($path in $paths) { Remove-Item -LiteralPath $path }
 Remove-Item -LiteralPath $receiptPath
+# Remove only empty parent directories belonging to removed entries; retain logs and unknown files.
+$directories=@($paths | ForEach-Object{
+    $parent=[IO.Path]::GetDirectoryName($_)
+    while($parent.StartsWith($gameRoot+'\',[StringComparison]::OrdinalIgnoreCase)){
+        $parent
+        $parent=[IO.Path]::GetDirectoryName($parent)
+    }
+} | Sort-Object -Unique | Sort-Object Length -Descending)
+foreach($directory in $directories){
+    if((Test-Path -LiteralPath $directory) -and @(Get-ChildItem -LiteralPath $directory -Force).Count -eq 0){Remove-Item -LiteralPath $directory}
+}
 Write-Output "Removed $($paths.Count) owned files. Game files and runtime logs preserved."

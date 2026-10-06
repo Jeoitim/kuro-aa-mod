@@ -1,49 +1,36 @@
-# 阶段实现与算法
+# 架构
 
-## 自有 TFAA 阶段
+游戏 DX11 绘制 → KuroUI 匹配 UI 绘制节点 → ReShade 回调 → AeonSR 获取场景颜色和可用深度
+→ 光流估算运动 → DLSS / FSR / XeSS 时域重建 → 回写场景 → 游戏继续绘制 UI。
 
-`KURO_PHASE` 开发编译开关为 1–5，正式默认 5，按阶段增量启用 pass。
+## 场景与界面
 
-1. 当前颜色解码、线性颜色历史、有效性 metadata、独立显示与 commit，debug 不反馈。
-2. 当前 / previous depth、相对深度拒绝、3×3 RGB neighborhood clamp。
-3. 1/16、1/4、1/2 多尺度光流，current→previous UV、子像素拟合、历史重投影、切镜检测。
-4. YCoCg、均值 / 二阶矩方差范围、运动权重与 60 Hz 参考衰减。
-5. UI mask、两个矩形、变化文字启发式、输出端有界锐化、三预设及 debug 0–10。
-6. 多后端注入由 AeonSR / ReShade 实现：DX11→DX12 共享、厂商 AA、光流、jitter 与 HUD。
-   游戏实测通用 jitter 导致镜头抖动；默认禁用该实验分支，保留原生分辨率时域稳定化。
+KuroUI 按 pixel / vertex shader 双签名、目标尺寸、格式与深度测试状态确认插入点。
+`render_effects(cmd, sceneRTV, {})` 可处理全分辨率离屏目标；ReShade 保存和恢复游戏绘制状态。
+每帧只处理一次，未匹配节点时跳过 AA，不将最终文字送入重建器。
+当前 profile 对应云豹版 build 16257982，不能据此保证所有 HUD 布局。
 
-阶段功能存在与编译通过不等于所有游戏场景均已验收，逐项证据见 validation.md。
-不修改游戏 projection 常量或游戏可执行文件，不注入未知矩阵。
+## 厂商重建
 
-## TFAA 数据流
+AeonSR v1.0.1 负责颜色 / 深度获取、DX11 / DX12 桥接、光流和运行库调用。
+DLAA 是 DLSS 的原生分辨率模式，FSR / XeSS Native AA 同样保持输入与输出分辨率一致。
+每帧仅选择一个厂商后端，不叠加其它时域滤波。
 
-Capture 原始颜色/深度 → luminance pyramid → coarse-to-fine optical flow
-→ global photometric cut rejection → reprojection → depth / confidence rejection
-→ neighborhood + variance clipping → temporal resolve → display → commit。
+默认 Native AA、High 运动估计、锐化 0，SpatialJitter=0、KeepInterface=0、NeuralRender=0。
+首次运行由 AeonSR 根据实际渲染 GPU 选择后端，随后保存；可在设置器手动修改。
+Quality / Performance 缩放已经完成的画面，不等于游戏场景改用低分辨率渲染。
 
-History / PreviousDepth / PreviousQuarter / PreviousCoarse 只在显示后提交。
-不在同一 pass 读写同一个 history target，诊断和锐化不进入历史。
-使用 RGBA16F 线性颜色；采样前 sRGB 解码，显示时编码；透明度保留当前帧。
-元数据包含连续帧、timer 和 depth convention key；reset、长间隔及重启拒绝旧历史。
+## 回调占位
 
-光流通过亮度 patch 的绝对误差、轻微位移惩罚、相对深度约束与子像素抛物线拟合估计。
-误差可信度、搜索范围和屏幕边界决定可用历史；四个 half-res 向量上采样考虑深度边缘。
-无法可靠恢复遮挡表面和复杂透明效果的真实运动，不能替代引擎原生运动矢量。
+ReShade 6.8 在没有注册 technique 时会提前返回，不触发 add-on 的 begin-effects 事件。
+`Shaders/Runtime.fx` 因此注册一个默认禁用的 identity technique，Native.ini 的 Techniques 为空。
+它不执行图像处理、锐化或历史积累，仅确保厂商回调可以运行。
 
-Mode A 的矩阵入口保留给未来 add-on：inverse current VP 恢复位置，再由 previous VP 投影。
-比较 previous-space 预测深度，不直接把 current depth 当成相机运动后的深度。
-矩阵无效时拒绝历史；本版本没有本游戏矩阵供应者，不推荐选择该模式。
+## 输入限制
 
-Mode B 为默认光流。未验证深度时采用颜色模式，UseDepth 默认 false。
-深度默认 DirectX 常规 Z；用户必须确认 reverse-Z、上下翻转和 far-plane。
-空深度不会作为有效几何，HasDepth false 时退回颜色模式。
+目前没有游戏原生运动矢量、可靠相机矩阵、正确投影抖动、完整 reactive mask
+或游戏专用遮挡显露数据。光流对头发、透明、粒子、重复纹理与快转存在歧义。
+关闭抖动后可进行时域稳定化，但不具备完整 temporal supersampling，不能称为原生集成质量。
 
-## 厂商路径
-
-管理器保证 AeonSR 厂商后端与 TFAA 互斥。Native.ini 不开启任何 TFAA technique。
-DLAA、FSR Native AA、XeSS AA 分别调用官方 runtime，原生输入 / 输出分辨率一致。
-超分 Quality / Performance 对现成画面重建，不承诺真正低分辨率场景渲染或 FPS 提升。
-
-SpatialJitter 默认 false，Sharpness 默认 0，KeepInterface 默认 true。
-实验 jitter 仍可在管理器打开，但已经观察到本游戏镜头抖动，不能作为稳定默认。
-未实现游戏专用 HUD draw signature 或原生运动向量提取；mask 和上游恢复均有局限。
+相关上游实现固定于 `8e8456848557d6e7282db3451473531a392209da`，
+见 AeonSR 的 `src/core/app.cpp`、`frame_inputs.cpp` 与 `src/upscalers`。
