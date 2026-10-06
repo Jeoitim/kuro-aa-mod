@@ -1,0 +1,20 @@
+# Local builds and dependencies
+/build/
+/dist/
+/work/
+/external/
+/runtime/
+*.dll
+*.exe
+*.addon32
+*.addon64
+*.pdb
+*.cso
+*.log
+*.zip
+*.user
+.vs/
+ReShade.ini
+AeonSR.ini
+!packaging/ReShade.ini
+!packaging/AeonSR.ini
