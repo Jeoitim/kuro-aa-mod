@@ -24,7 +24,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\AeonSR.ini') -Destinat
 Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\profiles\KuroCLE.ini') -Destination (Join-Path $outputRoot 'KuroUI.ini')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $outputRoot 'Licenses\Kuro_AA_LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $dependencyRoot 'reshade\LICENSE.md') -Destination (Join-Path $outputRoot 'Licenses\ReShade_LICENSE.md')
-& $Compiler /nologo /target:winexe /platform:x64 ("/out:" + (Join-Path $outputRoot 'KuroMod.Manager.exe')) /r:System.Windows.Forms.dll /r:System.Drawing.dll (Join-Path $projectRoot 'src\Manager.cs')
+& $Compiler /nologo /codepage:65001 /target:winexe /platform:x64 ("/out:" + (Join-Path $outputRoot 'KuroAA.Settings.exe')) /r:System.Windows.Forms.dll /r:System.Drawing.dll (Join-Path $projectRoot 'src\Settings.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Manager compilation failed.' }
 $textures = Join-Path $outputRoot 'KuroTFAA\Textures'
 New-Item -ItemType Directory -Path $textures -Force | Out-Null

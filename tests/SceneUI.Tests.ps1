@@ -26,7 +26,7 @@ foreach($backend in @('dlss','fsr','xess','tfaa')) {
     Get-ChildItem -LiteralPath $package -Force | ForEach-Object{Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $testRoot $_.Name) -Recurse}
     Copy-Item -LiteralPath (Join-Path $native 'smoke_ui.exe') -Destination $testRoot
     Copy-Item -LiteralPath (Join-Path $native 'KuroUI.addon64') -Destination $testRoot -Force
-    $manager=Start-Process -FilePath (Join-Path $testRoot 'KuroMod.Manager.exe') -ArgumentList '--backend',$backend -WindowStyle Hidden -PassThru
+    $manager=Start-Process -FilePath (Join-Path $testRoot 'KuroAA.Settings.exe') -ArgumentList '--backend',$backend -WindowStyle Hidden -PassThru
     $handle=$manager.Handle; $manager.WaitForExit()
     if($manager.ExitCode -ne 0){throw 'Backend selection failed.'}
     [IO.File]::WriteAllText((Join-Path $testRoot 'KuroUI.ini'),"[KuroUI]`nEnableEarlyAA=1`nEarlyUIShaderHash=$fixtureHash`nAllowOffscreenTarget=0`nCaptureCandidates=0`n")

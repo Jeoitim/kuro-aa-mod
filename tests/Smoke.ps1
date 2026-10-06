@@ -9,7 +9,7 @@ foreach($backend in @('dlss','fsr','xess','tfaa')) {
     New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
     Get-ChildItem -LiteralPath $package -Force | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $testRoot $_.Name) -Recurse }
     Copy-Item -LiteralPath $fixturePath -Destination (Join-Path $testRoot 'smoke_d3d11.exe')
-    $manager=Start-Process -FilePath (Join-Path $testRoot 'KuroMod.Manager.exe') -ArgumentList '--backend',$backend -WorkingDirectory $testRoot -WindowStyle Hidden -PassThru
+    $manager=Start-Process -FilePath (Join-Path $testRoot 'KuroAA.Settings.exe') -ArgumentList '--backend',$backend -WorkingDirectory $testRoot -WindowStyle Hidden -PassThru
     $handle=$manager.Handle; $manager.WaitForExit()
     if($manager.ExitCode -ne 0) { throw "Backend configuration failed: $backend" }
     $process=Start-Process -FilePath (Join-Path $testRoot 'smoke_d3d11.exe') -ArgumentList '1200' -WorkingDirectory $testRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $testRoot 'stdout.log') -RedirectStandardError (Join-Path $testRoot 'stderr.log') -PassThru

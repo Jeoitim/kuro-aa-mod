@@ -38,7 +38,7 @@ uniform bool ExcludeRegion2 < ui_category = "UI"; > = false;
 uniform float4 Region2 < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_category = "UI"; > = float4(0.78,0.0,1.0,0.25);
 uniform bool UseUIMask < ui_category = "UI"; ui_tooltip = "White pixels in KuroUIMask.png bypass history and sharpening."; > = false;
 
-uniform float Sharpness < ui_type = "slider"; ui_min = 0.0; ui_max = 0.3; ui_step = 0.01; ui_category = "Output"; > = 0.0;
+uniform float Sharpness < ui_type = "slider"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_category = "Output"; > = 0.0;
 uniform int DebugMode < ui_type = "combo"; ui_items = "Final\0Motion Vector\0Motion Magnitude\0Depth\0History\0Reprojection\0History Rejection\0Disocclusion\0Current\0UI Mask\0History Validity\0"; ui_category = "Output"; > = 0;
 
 static const float2 PixelSize = float2(1.0 / BUFFER_WIDTH, 1.0 / BUFFER_HEIGHT);

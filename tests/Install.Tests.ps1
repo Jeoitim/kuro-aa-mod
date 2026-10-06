@@ -13,14 +13,14 @@ if(@($receipt.Files).Count -lt 10) { throw 'Incomplete installation receipt.' }
 $rejected=$false
 try { & $install -GameDirectory $root -PackageDirectory $PackageDirectory } catch { $rejected=$true }
 if(!$rejected) { throw 'Reinstallation conflict was not rejected.' }
-$manager=Start-Process -FilePath (Join-Path $root 'KuroMod.Manager.exe') -ArgumentList '--disable' -WindowStyle Hidden -PassThru
+$manager=Start-Process -FilePath (Join-Path $root 'KuroAA.Settings.exe') -ArgumentList '--disable' -WindowStyle Hidden -PassThru
 $handle=$manager.Handle; $manager.WaitForExit()
 if($manager.ExitCode -ne 0 -or !(Test-Path -LiteralPath (Join-Path $root 'dxgi.dll.kuro-disabled'))) { throw 'Disable test failed.' }
-$manager=Start-Process -FilePath (Join-Path $root 'KuroMod.Manager.exe') -ArgumentList '--enable' -WindowStyle Hidden -PassThru
+$manager=Start-Process -FilePath (Join-Path $root 'KuroAA.Settings.exe') -ArgumentList '--enable' -WindowStyle Hidden -PassThru
 $handle=$manager.Handle; $manager.WaitForExit()
 if($manager.ExitCode -ne 0 -or !(Test-Path -LiteralPath (Join-Path $root 'dxgi.dll'))) { throw 'Enable test failed.' }
 foreach($backend in @('dlss','fsr','xess','tfaa','off')) {
-    $manager=Start-Process -FilePath (Join-Path $root 'KuroMod.Manager.exe') -ArgumentList '--backend',$backend -WindowStyle Hidden -PassThru
+    $manager=Start-Process -FilePath (Join-Path $root 'KuroAA.Settings.exe') -ArgumentList '--backend',$backend -WindowStyle Hidden -PassThru
     $handle=$manager.Handle; $manager.WaitForExit()
     if($manager.ExitCode -ne 0) { throw "Backend switch failed: $backend" }
     $aeon=Get-Content -LiteralPath (Join-Path $root 'AeonSR.ini') -Raw

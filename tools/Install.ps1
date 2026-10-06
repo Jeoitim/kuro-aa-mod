@@ -26,7 +26,7 @@ foreach ($file in $files) {
 }
 # A receipt is written before mutation and updated after every successful copy.
 # If copying fails, Uninstall.ps1 can remove the already-copied owned files.
-$receipt = [ordered]@{ Version=1; Package='Kuro AA 0.3.0-scene'; Files=@() }
+$receipt = [ordered]@{ Version=1; Package='Kuro AA 0.3.0'; Files=@() }
 [IO.File]::WriteAllText($receiptPath,($receipt | ConvertTo-Json -Depth 5))
 foreach ($entry in $plan) {
     $target = Join-Path $gameRoot $entry.Path
