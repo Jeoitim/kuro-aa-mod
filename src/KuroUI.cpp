@@ -17,6 +17,9 @@
 #include <vector>
 #include "PreviewVendor.hpp"
 #include "RenderLayoutTrace.hpp"
+#include "SceneVRS.hpp"
+#include "RenderTargetTrace.hpp"
+#include "SceneRenderScale.hpp"
 
 using namespace reshade;
 using namespace reshade::api;
@@ -24,11 +27,13 @@ namespace {
 template<class T> void release(T *&p) { if(p) { p->Release(); p=nullptr; } }
 std::filesystem::path root;
 RenderLayoutTrace render_layouts;
+RenderTargetTrace render_targets;
+SceneRenderScale scene_scale;
 std::mutex lock;
 std::atomic<bool> tracking{false};
 thread_local bool inside_early=false;
-struct Command { uint64_t ps=0,vs=0; resource_view target{}; resource_view depth{}; bool depth_test=true; };
-struct Pipeline { uint64_t hash=0; bool depth_test=true; };
+struct Command { uint64_t ps=0,vs=0; resource_view target{}; resource_view depth{}; bool depth_test=true; UINT vs_scene=UINT_MAX,ps_scene=UINT_MAX; };
+struct Pipeline { uint64_t hash=0; bool depth_test=true; UINT scene=UINT_MAX; };
 struct DrawStat { uint64_t shader=0,vertex_shader=0,target=0; unsigned width=0,height=0,format=0; bool depth=false; unsigned draws=0,vertices=0,first=0,last=0; std::string callers,inputs; };
 struct State {
     enum class Rule { Legacy,Engine,Shader,Full };
@@ -44,6 +49,12 @@ struct State {
     bool trace_callers=false;
     bool trace_resources=false;
     bool preview_enabled=false;
+    unsigned vrs_mode=0;
+    SceneVRS vrs;
+    ID3D11DeviceContext *vrs_context=nullptr;
+    bool vrs_active=false,vrs_reported=false;
+    unsigned vrs_width=0,vrs_height=0,vrs_applied_mode=0;
+    uint64_t vrs_draws=0;
     bool vendor_preview=false;
     PreviewVendor preview_vendor;
     std::unordered_set<uint64_t> preview_keys;
@@ -62,7 +73,7 @@ struct State {
     std::string pending_name;
     std::unordered_set<std::string> captured_keys;
     std::unordered_map<std::string,DrawStat> draws;
-    ~State() { release(pending_capture);release(scene_target); }
+    ~State() { if(vrs_active && vrs_context)vrs.end(vrs_context);release(vrs_context);release(pending_capture);release(scene_target); }
 };
 std::unordered_map<effect_runtime*,std::unique_ptr<State>> states;
 std::unordered_map<command_list*,Command> commands;
@@ -80,6 +91,7 @@ void load_profile(State &s)
 {
     wchar_t hash[64]{};
     const auto ini=(root / "KuroUI.ini").wstring();
+    s.vrs_mode=std::min(2u,GetPrivateProfileIntW(L"KuroUI",L"SceneVRS",0,ini.c_str()));
     wchar_t rule[32]{};GetPrivateProfileStringW(L"KuroUI",L"AARule",L"",rule,32,ini.c_str());
     s.rule=!_wcsicmp(rule,L"full") ? State::Rule::Full : !_wcsicmp(rule,L"shader") ? State::Rule::Shader
         : rule[0] ? State::Rule::Engine : State::Rule::Legacy;
@@ -119,11 +131,48 @@ void load_profile(State &s)
             s.engine_ui=static_cast<uint32_t>(rva);
     }
 }
+void scaled_scene_ready(ID3D11DeviceContext *context,ID3D11Texture2D *output){
+    D3D11_TEXTURE2D_DESC desc{};output->GetDesc(&desc);
+    for(auto &entry:states){State &s=*entry.second;
+        if(s.rule==State::Rule::Full || s.early || s.ui_started || reinterpret_cast<ID3D11DeviceContext*>(s.runtime->get_command_queue()->get_immediate_command_list()->get_native())!=context)continue;
+        ID3D11Device *device=nullptr;ID3D11RenderTargetView *view=nullptr;context->GetDevice(&device);
+        const auto hr=device->CreateRenderTargetView(output,nullptr,&view);release(device);if(FAILED(hr))continue;
+        release(s.scene_target);s.scene_target=view;s.scene_command=s.runtime->get_command_queue()->get_immediate_command_list();s.scene_width=desc.Width;s.scene_height=desc.Height;
+    }
+}
+bool prepare_scene_dlss(ID3D11DeviceContext *context,ID3D11Texture2D *output,unsigned *width,unsigned *height){
+    using Prepare=int(*)(effect_runtime*,uint64_t,unsigned*,unsigned*);
+    auto module=GetModuleHandleW(L"AeonSR.addon64");auto prepare=module?reinterpret_cast<Prepare>(GetProcAddress(module,"AeonSRPrepareSceneDLSS")):nullptr;
+    if(!prepare)return false;
+    for(auto &entry:states){auto &s=*entry.second;
+        if(s.rule!=State::Rule::Full && reinterpret_cast<ID3D11DeviceContext*>(s.runtime->get_command_queue()->get_immediate_command_list()->get_native())==context)
+            return prepare(s.runtime,reinterpret_cast<uint64_t>(output),width,height)==1;
+    }
+    return false;
+}
+bool process_scene_dlss(ID3D11DeviceContext *context,ID3D11Texture2D *input,ID3D11Texture2D *depth,ID3D11Texture2D *output){
+    using Process=int(*)(effect_runtime*,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
+    auto module=GetModuleHandleW(L"AeonSR.addon64");auto process=module?reinterpret_cast<Process>(GetProcAddress(module,"AeonSRProcessSceneDLSS")):nullptr;
+    if(!process)return false;
+    for(auto &entry:states){auto &s=*entry.second;
+        if(s.rule==State::Rule::Full || s.early || s.ui_started || reinterpret_cast<ID3D11DeviceContext*>(s.runtime->get_command_queue()->get_immediate_command_list()->get_native())!=context)continue;
+        scene_scale.aa_begin(context);
+        const bool ok=process(s.runtime,reinterpret_cast<uint64_t>(context),reinterpret_cast<uint64_t>(input),reinterpret_cast<uint64_t>(depth),reinterpret_cast<uint64_t>(output),s.frame)==1;
+        scene_scale.aa_end(context);
+        if(ok){
+            s.early=true;++s.early_count;++s.engine_count;s.processed_targets.insert(reinterpret_cast<uint64_t>(output));
+            // Consume ReShade's automatic full-frame slot; AeonSR recognizes this view as already reconstructed.
+            s.runtime->render_effects(s.runtime->get_command_queue()->get_immediate_command_list(),{},{});
+        }
+        return ok;
+    }
+    return false;
+}
 void refresh(State &s)
 {
     if(s.frame % 60 == 0) load_profile(s);
-    bool active=false;
-    for(const auto &entry:states) active |= entry.second->trace || entry.second->early_hash != 0 || entry.second->engine_ui != 0;
+    bool active=render_targets.enabled();
+    for(const auto &entry:states) active |= entry.second->trace || entry.second->early_hash != 0 || entry.second->engine_ui != 0 || entry.second->vrs_mode!=0;
     tracking.store(active,std::memory_order_relaxed);
 }
 void on_init(effect_runtime *runtime)
@@ -138,6 +187,7 @@ void on_init(effect_runtime *runtime)
 }
 void on_destroy(effect_runtime *runtime)
 {
+    scene_scale.clear();
     auto it=states.find(runtime);
     if(it!=states.end()) {
         using Release=void(*)(effect_runtime*);
@@ -165,8 +215,10 @@ void on_present(command_queue *queue,swapchain *chain,const rect*,const rect*,ui
     for(auto &entry:states) {
         State &s=*entry.second;
         if(s.runtime->get_device()!=queue->get_device() || s.runtime->get_current_back_buffer().handle!=chain->get_current_back_buffer().handle) continue;
+        if(s.vrs_active && s.vrs_context){s.vrs.end(s.vrs_context);s.vrs_active=false;}
         if(s.frame==0) note("Kuro UI: first present reached.");
         refresh(s); s.in_present=true;
+        scene_scale.service(reinterpret_cast<ID3D11DeviceContext*>(queue->get_immediate_command_list()->get_native()),root,&inside_early,note,scaled_scene_ready,prepare_scene_dlss,process_scene_dlss);
         if(s.frame==0) note("Kuro UI: settings read.");
         if(s.early) continue;
         if(s.skip_unmatched) {
@@ -194,13 +246,18 @@ void on_end(effect_runtime *runtime)
     auto it=states.find(runtime); if(it==states.end()) return;
     State &s=*it->second;
     inside_early=true;
+    render_targets.flush();
     s.preview_vendor.service_queue();
     using Service=void(*)(effect_runtime*,uint64_t);
     auto module=GetModuleHandleW(L"AeonSR.addon64");
     auto service=module?reinterpret_cast<Service>(GetProcAddress(module,"AeonSRServicePreviewQueue")):nullptr;
     if(service)service(runtime,s.frame);
+    using EndScene=void(*)(effect_runtime*);
+    auto end_scene=module?reinterpret_cast<EndScene>(GetProcAddress(module,"AeonSREndSceneFrame")):nullptr;
+    if(end_scene)end_scene(runtime);
     inside_early=false;
     if(s.frame % 300 == 0) {
+        if(s.vrs_mode) note("Kuro AA: experimental scene VRS draws="+std::to_string(s.vrs_draws)+", mode="+std::to_string(s.vrs_mode));
         note("Kuro AA: early frames="+std::to_string(s.early_count)+", engine frames="+std::to_string(s.engine_count)+", unmatched skipped="+std::to_string(s.skipped_count)+", UI-before-scene bypass="+std::to_string(s.ui_blocked_frames)+", preview AA="+std::to_string(s.preview_count)+", preview failures="+std::to_string(s.preview_failures));
         if(s.trace) dump(s);
     }
@@ -223,7 +280,7 @@ void on_pipeline(device *dev,pipeline_layout,uint32_t count,const pipeline_subob
     for(uint32_t i=0;i<count;++i) {
         if((objects[i].type==pipeline_subobject_type::pixel_shader || objects[i].type==pipeline_subobject_type::vertex_shader) && objects[i].count) {
             const auto &shader=*static_cast<const shader_desc*>(objects[i].data);
-            if(shader.code && shader.code_size) { info.hash=shader_hash(shader.code,shader.code_size); relevant=true;render_layouts.capture(info.hash,objects[i].type==pipeline_subobject_type::vertex_shader?"VS":"PS",shader.code,shader.code_size); }
+            if(shader.code && shader.code_size) { info.hash=shader_hash(shader.code,shader.code_size); relevant=true;render_layouts.capture(info.hash,objects[i].type==pipeline_subobject_type::vertex_shader?"VS":"PS",shader.code,shader.code_size);bool vertex=false;render_layouts.scene_slot(info.hash,info.scene,vertex); }
         }
         if(objects[i].type==pipeline_subobject_type::depth_stencil_state && objects[i].count) {
             info.depth_test=static_cast<const depth_stencil_desc*>(objects[i].data)->depth_enable; relevant=true;
@@ -273,17 +330,19 @@ void finish_capture(command_list *cmd)
 }
 void on_bind(command_list *cmd,pipeline_stage stage,pipeline pipe)
 {
-    if(!tracking.load(std::memory_order_relaxed) || inside_early || cmd->get_device()->get_api()!=device_api::d3d11) return;
+    if(!tracking.load(std::memory_order_relaxed) || (inside_early && !scene_scale.observing()) || cmd->get_device()->get_api()!=device_api::d3d11) return;
     finish_capture(cmd);
     std::lock_guard<std::mutex> guard(lock);
     auto &state=commands[cmd]; auto found=pipelines.find(pipe.handle);
-    if(static_cast<uint32_t>(stage & pipeline_stage::pixel_shader)!=0) state.ps=found!=pipelines.end()?found->second.hash:0;
-    if(static_cast<uint32_t>(stage & pipeline_stage::vertex_shader)!=0) state.vs=found!=pipelines.end()?found->second.hash:0;
+    if(scene_scale.scaling() && ((static_cast<uint32_t>(stage & pipeline_stage::pixel_shader)!=0 && state.ps_scene!=(found!=pipelines.end()?found->second.scene:UINT_MAX))
+        || (static_cast<uint32_t>(stage & pipeline_stage::vertex_shader)!=0 && state.vs_scene!=(found!=pipelines.end()?found->second.scene:UINT_MAX))))scene_scale.dirty_constants();
+    if(static_cast<uint32_t>(stage & pipeline_stage::pixel_shader)!=0){state.ps=found!=pipelines.end()?found->second.hash:0;state.ps_scene=found!=pipelines.end()?found->second.scene:UINT_MAX;}
+    if(static_cast<uint32_t>(stage & pipeline_stage::vertex_shader)!=0){state.vs=found!=pipelines.end()?found->second.hash:0;state.vs_scene=found!=pipelines.end()?found->second.scene:UINT_MAX;}
     if(static_cast<uint32_t>(stage & pipeline_stage::depth_stencil)!=0) state.depth_test=found!=pipelines.end()?found->second.depth_test:true;
 }
 void on_targets(command_list *cmd,uint32_t count,const resource_view *targets,resource_view depth)
 {
-    if(!tracking.load(std::memory_order_relaxed) || inside_early || cmd->get_device()->get_api()!=device_api::d3d11) return;
+    if(!tracking.load(std::memory_order_relaxed) || (inside_early && !scene_scale.observing()) || cmd->get_device()->get_api()!=device_api::d3d11) return;
     finish_capture(cmd);
     std::lock_guard<std::mutex> guard(lock);
     commands[cmd].target=count?targets[0]:resource_view{}; commands[cmd].depth=depth;
@@ -335,21 +394,58 @@ std::string texture_inputs(command_list *cmd)
 }
 bool draw(command_list *cmd,uint32_t vertices)
 {
-    if(!tracking.load(std::memory_order_relaxed) || inside_early || cmd->get_device()->get_api()!=device_api::d3d11) return false;
+    auto draw_timer=scene_scale.time_draw();
+    if(!tracking.load(std::memory_order_relaxed) || (inside_early && !scene_scale.observing()) || cmd->get_device()->get_api()!=device_api::d3d11) return false;
     finish_capture(cmd);
     Command c;
     { std::lock_guard<std::mutex> guard(lock); auto it=commands.find(cmd); if(it==commands.end()) return false; c=it->second; }
     if(!c.target.handle) return false;
     bool depth_active=c.depth.handle!=0 && c.depth_test;
+    if(scene_scale.observing()){
+        if(scene_scale.recording() && render_targets.enabled())for(const auto &entry:states)if(entry.second->runtime->get_device()==cmd->get_device())
+            render_targets.draw(cmd,entry.second->frame,c.target,c.depth,depth_active,c.ps,true,scene_scale.phase());
+        auto *context=reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+        if(scene_scale.scaling() && scene_scale.constants_dirty()){
+            if(c.vs_scene<14 && !scene_scale.scale_constants(context,c.vs_scene,true))scene_scale.cancel("scene VS constants override failed");
+            if(c.ps_scene<14 && !scene_scale.scale_constants(context,c.ps_scene,false))scene_scale.cancel("scene PS constants override failed");
+            scene_scale.constants_applied();
+        }
+        if(scene_scale.recording()){
+            auto resource=cmd->get_device()->get_resource_from_view(c.target);
+            if(cmd->get_device()->get_resource_desc(resource).type==resource_type::texture_2d)
+                scene_scale.observe(context,reinterpret_cast<ID3D11Texture2D*>(resource.handle),depth_active,c.vs,c.ps,vertices);
+        }
+        return false;
+    }
+    if(render_targets.enabled())for(const auto &entry:states)if(entry.second->runtime->get_device()==cmd->get_device() && !entry.second->in_present)
+        render_targets.draw(cmd,entry.second->frame,c.target,c.depth,depth_active,c.ps);
     bool interested=false;
     for(const auto &entry:states) {
         const State &s=*entry.second;
         interested |= s.runtime->get_device()==cmd->get_device() && !s.in_present
-            && (s.trace || (s.preview_enabled && (s.engine_ui || s.early_hash)) || (s.engine_ui && !s.early && !s.ui_started) || (!s.engine_requested && !s.early && s.early_hash==c.ps && !depth_active));
+            && (s.vrs_mode || s.vrs_active || s.trace || (s.preview_enabled && (s.engine_ui || s.early_hash)) || (s.engine_ui && !s.early && !s.ui_started) || (!s.engine_requested && !s.early && s.early_hash==c.ps && !depth_active));
     }
     if(!interested) return false;
     auto resource=cmd->get_device()->get_resource_from_view(c.target);
     auto desc=cmd->get_device()->get_resource_desc(resource);
+    for(auto &entry:states){
+        State &s=*entry.second;if(s.runtime->get_device()!=cmd->get_device())continue;
+        auto *context=reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+        if(context->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE)continue;
+        const bool eligible=s.vrs_mode && !s.early && !s.ui_started && depth_active && desc.type==resource_type::texture_2d
+            && static_cast<unsigned>(desc.texture.format)==10 && desc.texture.samples==1 && desc.texture.width>=1280 && desc.texture.height>=720
+            && context->GetType()==D3D11_DEVICE_CONTEXT_IMMEDIATE;
+        if(s.vrs_active && (!eligible || s.vrs_width!=desc.texture.width || s.vrs_height!=desc.texture.height || s.vrs_applied_mode!=s.vrs_mode)){
+            s.vrs.end(context);s.vrs_active=false;
+        }
+        if(eligible && !s.vrs_active){
+            inside_early=true;const bool active=s.vrs.begin(context,desc.texture.width,desc.texture.height,s.vrs_mode);inside_early=false;
+            s.vrs_active=active;s.vrs_width=desc.texture.width;s.vrs_height=desc.texture.height;s.vrs_applied_mode=s.vrs_mode;
+            if(active && !s.vrs_context){s.vrs_context=context;context->AddRef();}
+            if(!s.vrs_reported){note("Kuro AA: experimental scene VRS "+std::string(active?"active":"unavailable")+", status="+std::to_string(s.vrs.status()));s.vrs_reported=true;}
+        }
+        if(eligible && s.vrs_active)++s.vrs_draws;
+    }
     if(depth_active && desc.texture.width>=1280 && desc.texture.height>=720 && static_cast<unsigned>(desc.texture.format)==10){
         for(const auto &entry:states)if(entry.second->runtime->get_device()==cmd->get_device()){
             auto *context=reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());inside_early=true;
@@ -478,7 +574,10 @@ bool draw(command_list *cmd,uint32_t vertices)
         // ReShade preserves the game state; this runs before the actual UI draw.
         s.early=true; ++s.early_count; inside_early=true;
         if(engine_match)++s.engine_count;
+        auto *aa_context=reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+        scene_scale.aa_begin(aa_context);
         s.runtime->render_effects(cmd,processing_target,{});
+        scene_scale.aa_end(aa_context);
         s.processed_targets.insert(cmd->get_device()->get_resource_from_view(processing_target).handle);
         inside_early=false;
     }
@@ -490,6 +589,23 @@ void on_cmd_destroy(command_list *cmd) {
     std::lock_guard<std::mutex> guard(lock);commands.erase(cmd);
     for(auto &entry:states)if(entry.second->scene_command==cmd){release(entry.second->scene_target);entry.second->scene_command=nullptr;}
 }
+void on_resource_init(device *dev,const resource_desc &desc,const subresource_data *,resource_usage,resource resource){
+    render_targets.resource(dev,desc,resource);
+}
+void on_descriptors(command_list *cmd,shader_stage stages,pipeline_layout,uint32_t,const descriptor_table_update &update){
+    if(!scene_scale.scaling() || update.type!=descriptor_type::constant_buffer)return;
+    std::lock_guard<std::mutex> guard(lock);auto found=commands.find(cmd);if(found==commands.end())return;
+    const auto &c=found->second;
+    auto covers=[&](UINT slot){return slot>=update.binding && slot-update.binding<update.count;};
+    if((static_cast<uint32_t>(stages & shader_stage::vertex)!=0 && covers(c.vs_scene))
+        || (static_cast<uint32_t>(stages & shader_stage::pixel)!=0 && covers(c.ps_scene)))scene_scale.dirty_constants();
+}
+void on_buffer_unmap(device *,resource buffer){if(scene_scale.scaling())scene_scale.invalidate_constants(buffer.handle);}
+void on_buffer_map(device *,resource buffer,uint64_t,uint64_t,map_access,void **){if(scene_scale.scaling())scene_scale.invalidate_constants(buffer.handle);}
+bool on_buffer_update(device *,const void *,resource buffer,uint64_t,uint64_t){if(scene_scale.scaling())scene_scale.invalidate_constants(buffer.handle);return false;}
+bool on_buffer_update_command(command_list *,const void *,resource buffer,uint64_t,uint64_t){if(scene_scale.scaling())scene_scale.invalidate_constants(buffer.handle);return false;}
+bool on_buffer_copy(command_list *,resource,uint64_t,resource dest,uint64_t,uint64_t){if(scene_scale.scaling())scene_scale.invalidate_constants(dest.handle);return false;}
+bool on_resource_copy(command_list *,resource,resource dest){if(scene_scale.scaling())scene_scale.invalidate_constants(dest.handle);return false;}
 }
 extern "C" {
 __declspec(dllexport) const char *NAME="Kuro AA scene integration";
@@ -501,12 +617,18 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID)
         if(!register_addon(module)) return FALSE;
         wchar_t path[MAX_PATH]{}; GetModuleFileNameW(module,path,MAX_PATH); root=std::filesystem::path(path).parent_path();
         render_layouts.enable(root);
+        render_targets.enable(root);
+        register_event<addon_event::init_resource>(on_resource_init);
+        register_event<addon_event::map_buffer_region>(on_buffer_map);register_event<addon_event::unmap_buffer_region>(on_buffer_unmap);
+        register_event<addon_event::update_buffer_region>(on_buffer_update);register_event<addon_event::update_buffer_region_command>(on_buffer_update_command);
+        register_event<addon_event::copy_buffer_region>(on_buffer_copy);register_event<addon_event::copy_resource>(on_resource_copy);
         register_event<addon_event::init_effect_runtime>(on_init); register_event<addon_event::destroy_effect_runtime>(on_destroy);
         register_event<addon_event::destroy_resource>(on_destroy_resource);
         register_event<addon_event::present>(on_present);
         register_event<addon_event::reshade_present>(on_end); register_event<addon_event::init_pipeline>(on_pipeline);
         register_event<addon_event::destroy_pipeline>(on_pipeline_destroy); register_event<addon_event::bind_pipeline>(on_bind);
         register_event<addon_event::bind_render_targets_and_depth_stencil>(on_targets); register_event<addon_event::draw>(on_draw);
+        register_event<addon_event::push_descriptors>(on_descriptors);
         register_event<addon_event::draw_indexed>(on_indexed); register_event<addon_event::destroy_command_list>(on_cmd_destroy);
     } else if(reason==DLL_PROCESS_DETACH) unregister_addon(module);
     return TRUE;

@@ -21,6 +21,7 @@ class RenderLayoutTrace {
     std::unordered_map<uint64_t,SceneSlot> scenes_;
     uint64_t last_frame_=UINT64_MAX;
     unsigned samples_=0,disassemblies_=0;
+    bool layout_only_=false;
     std::unordered_set<uint64_t> seen_;
     void variable(uint64_t hash,const char *stage,const char *buffer,UINT slot,const std::string &name,
         ID3D11ShaderReflectionType *reflection,UINT offset,UINT bytes,unsigned depth=0){
@@ -32,8 +33,13 @@ class RenderLayoutTrace {
         }
     }
 public:
+    bool scene_slot(uint64_t hash,UINT &slot,bool &vertex){
+        std::lock_guard<std::mutex> guard(mutex_);auto found=scenes_.find(hash);if(found==scenes_.end())return false;
+        slot=found->second.slot;vertex=found->second.vertex;return true;
+    }
     void enable(const std::filesystem::path &root){
         const auto path=root/L"KuroUI.ini";
+        layout_only_=GetPrivateProfileIntW(L"KuroUI",L"SceneScaleContinuous",0,path.c_str())!=0 || GetPrivateProfileIntW(L"KuroUI",L"SceneVendorDirect",0,path.c_str())!=0;
         if(!GetPrivateProfileIntW(L"KuroUI",L"TraceRenderLayouts",0,path.c_str()))return;
         root_=root;output_.open(root/L"KuroUI-render-layouts.csv",std::ios::trunc);
         output_<<"shader,stage,buffer,slot,variable,offset,bytes,type,rows,columns\n";
@@ -44,7 +50,7 @@ public:
     }
     void capture(uint64_t hash,const char *stage,const void *code,size_t size){
         std::lock_guard<std::mutex> guard(mutex_);
-        if(!output_.is_open() || seen_.size()>=1024 || !seen_.insert(hash).second)return;
+        if((!output_.is_open() && !layout_only_) || seen_.size()>=1024 || !seen_.insert(hash).second)return;
         ID3D11ShaderReflection *reflection=nullptr;
         if(FAILED(D3DReflect(code,size,__uuidof(ID3D11ShaderReflection),reinterpret_cast<void**>(&reflection))))return;
         D3D11_SHADER_DESC shader{};reflection->GetDesc(&shader);
@@ -60,16 +66,16 @@ public:
                 used|=!strcmp(value.Name,"resolutionScaling_g") && (value.uFlags&D3D_SVF_USED)!=0;
             }
             if(!strcmp(desc.Name,"cb_scene") && slot<14 && viewport && inverse && scale)scenes_[hash]={slot,!strcmp(stage,"VS")};
-            if(used && disassemblies_<8){ID3DBlob *text=nullptr;if(SUCCEEDED(D3DDisassemble(code,size,0,nullptr,&text))){
+            if(output_.is_open() && used && disassemblies_<8){ID3DBlob *text=nullptr;if(SUCCEEDED(D3DDisassemble(code,size,0,nullptr,&text))){
                 std::ofstream file(root_/("KuroUI-scale-use-"+std::to_string(hash)+".txt"),std::ios::binary);
                 file.write(static_cast<const char*>(text->GetBufferPointer()),text->GetBufferSize());text->Release();++disassemblies_;
             }}
-            for(UINT v=0;v<desc.Variables;++v){auto *variable=buffer->GetVariableByIndex(v);D3D11_SHADER_VARIABLE_DESC value{};D3D11_SHADER_TYPE_DESC type{};
+            if(output_.is_open())for(UINT v=0;v<desc.Variables;++v){auto *variable=buffer->GetVariableByIndex(v);D3D11_SHADER_VARIABLE_DESC value{};D3D11_SHADER_TYPE_DESC type{};
                 if(FAILED(variable->GetDesc(&value)) || FAILED(variable->GetType()->GetDesc(&type)))continue;
                 this->variable(hash,stage,desc.Name,slot,value.Name?value.Name:"anonymous",variable->GetType(),value.StartOffset,value.Size);
             }
         }
-        output_.flush();reflection->Release();
+        if(output_.is_open())output_.flush();reflection->Release();
     }
     void sample(uint64_t shader,uint64_t frame,ID3D11DeviceContext *context,unsigned width,unsigned height){
         std::lock_guard<std::mutex> guard(mutex_);

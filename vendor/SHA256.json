@@ -55,4 +55,49 @@
     "Path": "reshade/LICENSE.md",
     "SHA256": "d2bb5eb908e9aa7ac2f7f4cf6441d62e1f6ac1256cf22bb5289516c9f30e5f0a"
   }
+,
+  {
+    "Path": "nvapi/LICENSE.txt",
+    "SHA256": "647db85e5f5f3b507831a2fa7eec215ab8cca01d280486f1844696365913192c"
+  },
+  {
+    "Path": "nvapi/nvapi_interface.h",
+    "SHA256": "a3e3f84a25926b76b73199e861ee4692875b935cfc2e19e90e7be3e43e7f0756"
+  },
+  {
+    "Path": "nvapi/nvapi_lite_common.h",
+    "SHA256": "5ddc178d1d504b89907dad59d41d670e92647e5b7847d4de1461e6765d8871e8"
+  },
+  {
+    "Path": "nvapi/nvapi_lite_d3dext.h",
+    "SHA256": "2c01bea4c44c4d49354f96c0f75a5bbd63b75fcd2c8dcf7a423218a03548a65d"
+  },
+  {
+    "Path": "nvapi/nvapi_lite_salend.h",
+    "SHA256": "51f3220d3055d644fbfee73f78432c1fda7ec26df23a7233aff5d8c522a01ace"
+  },
+  {
+    "Path": "nvapi/nvapi_lite_salstart.h",
+    "SHA256": "c5b40f26c9732578e4858ed3bcb7651b79e87aef87bd36af66720c0151f13856"
+  },
+  {
+    "Path": "nvapi/nvapi_lite_sli.h",
+    "SHA256": "2c260856c74a9e936bac34b8d737e8906f1b744e3b671a38e9e9405a953eb2b1"
+  },
+  {
+    "Path": "nvapi/nvapi_lite_stereo.h",
+    "SHA256": "62f4196fabc1fb031140549d8688f2a86a93f99b4c3ce684c6861cb0fcd87dc5"
+  },
+  {
+    "Path": "nvapi/nvapi_lite_surround.h",
+    "SHA256": "f81364ad2b30e88ef9233ea68fa709239456b930a86f5a283fcdbb80b9daeed8"
+  },
+  {
+    "Path": "nvapi/nvapi.h",
+    "SHA256": "4ee1bff7568ceec72124b8b3e43bf65ccb69dbb878b08c634b128f7edcd28f3b"
+  },
+  {
+    "Path": "nvapi/README.md",
+    "SHA256": "8da25d88c9186c838d89177a929d669c0f43bf8e3e480f51eadf2d2eca60a355"
+  }
 ]

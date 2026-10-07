@@ -10,6 +10,9 @@
 #include "PreviewBudget.hpp"
 
 namespace aeon_sr {
+void scene_dlss_release_all();
+void scene_dlss_release_runtime(reshade::api::effect_runtime *);
+void scene_dlss_release_device(reshade::api::device *);
 namespace {
 bool creating_view = false;
 struct View {
@@ -50,8 +53,9 @@ struct Pending { uint32_t width,height,format;uint64_t frame; };
 std::map<reshade::api::effect_runtime*,std::deque<Pending>> pending;
 }
 bool preview_device_building() { return creating_view; }
-void preview_release_all() { pending.clear();views.clear(); }
+void preview_release_all() { scene_dlss_release_all();pending.clear();views.clear(); }
 void preview_release_device(reshade::api::device *device) {
+    scene_dlss_release_device(device);
     for (auto it = views.begin(); it != views.end();) {
         if (it->second->game == device) it = views.erase(it); else ++it;
     }
@@ -66,11 +70,14 @@ extern "C" __declspec(dllexport) void AeonSRReleasePreview(reshade::api::effect_
     }
 }
 extern "C" __declspec(dllexport) void AeonSRReleasePreviewRuntime(reshade::api::effect_runtime *runtime) {
+    aeon_sr::scene_dlss_release_runtime(runtime);
     aeon_sr::pending.erase(runtime);
     for(auto it=aeon_sr::views.begin();it!=aeon_sr::views.end();){
         if(it->first.first==runtime)it=aeon_sr::views.erase(it);else ++it;
     }
 }
+
+#include "AeonSceneDLSS.inl"
 extern "C" __declspec(dllexport) void AeonSRServicePreviewQueue(reshade::api::effect_runtime *runtime,uint64_t frame){
     using namespace aeon_sr;
     auto list=pending.find(runtime);if(list==pending.end() || list->second.empty())return;

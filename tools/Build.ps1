@@ -29,6 +29,7 @@ foreach($name in @('AeonSR.ini','Native.ini','Shaders')){Copy-Item -LiteralPath 
 Copy-Item -LiteralPath (Join-Path $root 'packaging\profiles\KuroCLE.ini') -Destination (Join-Path $mod 'KuroUI.ini')
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $mod 'Licenses\Kuro_AA_LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $vendor 'reshade\LICENSE.md') -Destination (Join-Path $mod 'Licenses\ReShade_LICENSE.md')
+Copy-Item -LiteralPath (Join-Path $vendor 'nvapi\LICENSE.txt') -Destination (Join-Path $mod 'Licenses\NVAPI_LICENSE.txt')
 & $Compiler /nologo /codepage:65001 /target:winexe /platform:x64 ("/out:"+(Join-Path $mod 'KuroAA.Settings.exe')) /r:System.Windows.Forms.dll /r:System.Drawing.dll (Join-Path $root 'src\Settings.cs')
 if($LASTEXITCODE){throw 'Settings compilation failed.'}
 $files=@(Get-ChildItem -LiteralPath $output -Recurse -File | ForEach-Object{[pscustomobject]@{Path=$_.FullName.Substring($output.Length+1).Replace('\','/');SHA256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant()}})
