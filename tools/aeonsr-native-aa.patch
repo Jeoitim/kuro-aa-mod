@@ -1,0 +1,51 @@
+diff --git a/src/core/settings.cpp b/src/core/settings.cpp
+--- a/src/core/settings.cpp
++++ b/src/core/settings.cpp
+@@ -420,5 +420,7 @@
+ 		}
+ 	}
++	// Kuro AA 0.4.1 supports native-resolution antialiasing only, including legacy INIs.
++	out.upscale_mode = 0;
+ 	if (!have_mode && legacy_bands > 1ul)
+ 		out.neural_mode = static_cast<unsigned int>(NeuralMode::UltraPerformance);
+ 	else if (!have_mode && legacy_balanced)
+diff --git a/src/core/frame_plan.cpp b/src/core/frame_plan.cpp
+--- a/src/core/frame_plan.cpp
++++ b/src/core/frame_plan.cpp
+@@ -122,7 +122,7 @@
+ 
+ 	p.depth_inverted = false;
+ 
+-	p.quality_mode = s.upscale_mode;
++	p.quality_mode = 0;
+ 	p.render_preset = s.render_preset;
+ 	p.sharpness = s.sharpness;
+ 	p.frame_time_ms = frame_time_ms;
+diff --git a/src/core/panel.cpp b/src/core/panel.cpp
+--- a/src/core/panel.cpp
++++ b/src/core/panel.cpp
+@@ -638,22 +638,8 @@
+ void draw_experiments_section(const PanelState &state, Settings &settings, PanelActions &actions)
+ {
+ 	ImGui::SeparatorText("Vendor profile");
+-	static const RowOption kUpscaleOptions[] = {
+-		{ "Native", "Full resolution - anti-aliasing only" },
+-		{ "Ultra Quality", "Not offered by every upscaler; falls back to Quality" },
+-		{ "Quality" },
+-		{ "Balanced" },
+-		{ "Performance" },
+-		{ "Ultra Performance" },
+-	};
+-	constexpr unsigned int kUpscaleModeCount = static_cast<unsigned int>(UpscaleMode::UltraPerformance) + 1u;
+-	if (button_row_index<kUpscaleModeCount>("Mode", &settings.upscale_mode, kUpscaleOptions,
+-			"How much the game renders before upscaling.\n"
+-			"Lower renders less and runs faster.")) {
+-		actions.reset = true;
+-		actions.invalidate_history = true;
+-		actions.persist = true;
+-	}
++	settings.upscale_mode = 0;
++	ImGui::TextUnformatted("Native resolution anti-aliasing only (Kuro AA Mod)");
+ 
+ 	if (settings.upscale_mode != 0) {
+ 		const bool vendor = state.active_is_fsr || state.active_is_xess;

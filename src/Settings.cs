@@ -13,8 +13,8 @@ using System.Reflection;
 
 [assembly: AssemblyTitle("黎之轨迹抗锯齿设置")]
 [assembly: AssemblyProduct("Kuro AA Mod")]
-[assembly: AssemblyVersion("0.4.0.0")]
-[assembly: AssemblyFileVersion("0.4.0.0")]
+[assembly: AssemblyVersion("0.4.1.0")]
+[assembly: AssemblyFileVersion("0.4.1.0")]
 
 internal static class Config
 {
@@ -67,7 +67,7 @@ internal static class Config
     internal static void SelectBackend(int backend,int quality,float sharpness,int motionQuality=1)
     {
         RequireStopped();
-        if (backend<0 || backend>4 || quality<0 || quality>5 || motionQuality<0 || motionQuality>1) throw new ArgumentException("抗锯齿选项无效。");
+        if (backend<0 || backend>4 || quality!=0 || motionQuality<0 || motionQuality>1) throw new ArgumentException("本版本只支持 DLAA / Native AA。");
         if(float.IsNaN(sharpness) || float.IsInfinity(sharpness) || sharpness<0 || sharpness>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00。");
         Set(PathOf("AeonSR.ini"),"AeonSR",new Dictionary<string,string> {
             {"Enabled",backend==3 ? "0":"1"}, {"Upscaler",backend==4 ? "4294967295":backend.ToString()},
@@ -277,17 +277,17 @@ internal class DarkForm : Form
 
 internal sealed class SettingsWindow : DarkForm
 {
-    private readonly ComboBox backend=Theme.Combo("NVIDIA DLAA / DLSS","AMD FSR","Intel XeSS","关闭抗锯齿效果","按游戏显卡自动选择");
-    private readonly ComboBox quality=Theme.Combo("DLAA","质量","均衡","性能","超级性能");
-    private int[] qualityIds=new[]{0,2,3,4,5};
+    private readonly ComboBox backend=Theme.Combo("NVIDIA DLAA","AMD FSR Native AA","Intel XeSS Native AA","关闭抗锯齿效果","按游戏显卡自动选择");
+    private readonly ComboBox quality=Theme.Combo("DLAA");
+    private int[] qualityIds=new[]{0};
     private int qualityBackend=-1;
-    private readonly ComboBox motionQuality=Theme.Combo("Balanced","High");
+    private readonly ComboBox motionQuality=Theme.Combo("标准","高");
     private readonly ComboBox rule=Theme.Combo("引擎边界","Shader 签名","全屏 AA");
     private readonly CheckBox capture=Theme.Check("采集绘制目标（诊断）");
     private readonly CheckBox preview=Theme.Check("角色界面抗锯齿（实验）");
     private readonly CenteredNumberBox cacheMB=new CenteredNumberBox{Text="512",BackColor=Theme.Surface,ForeColor=Theme.Text};
     private readonly ComboBox cacheContexts=Theme.Combo("4","8","12","16");
-    private readonly ComboBox cacheFull=Theme.Combo("跳过 AA","排队重建（可能卡顿）");
+    private readonly ComboBox cacheFull=Theme.Combo("跳过 AA","排队准备（可能卡顿）");
     private readonly SharpnessSlider cacheSlider=new SharpnessSlider{Minimum=1,Maximum=32,Value=4};
     private readonly CheckBox adaptive=Theme.Check("按可用显存限制"),diskCache=Theme.Check("保存编译缓存"),prewarm=Theme.Check("启动时后台预热");
     private readonly SharpnessSlider sharp=new SharpnessSlider();
@@ -302,13 +302,13 @@ internal sealed class SettingsWindow : DarkForm
         var root=new TableLayoutPanel {Dock=DockStyle.Fill,Padding=new Padding(26,22,26,20),ColumnCount=1,RowCount=5};
         root.RowStyles.Add(new RowStyle(SizeType.Absolute,55));root.RowStyles.Add(new RowStyle(SizeType.Absolute,48));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,52));root.RowStyles.Add(new RowStyle(SizeType.Absolute,28));Controls.Add(root);
         var header=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2};header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));
-        header.Controls.Add(Theme.LabelOf("黎之轨迹抗锯齿",18,true),0,0);var version=Theme.LabelOf("0.4.0");version.ForeColor=Theme.Muted;header.Controls.Add(version,1,0);root.Controls.Add(header,0,0);
+        header.Controls.Add(Theme.LabelOf("黎之轨迹抗锯齿",18,true),0,0);var version=Theme.LabelOf("0.4.1");version.ForeColor=Theme.Muted;header.Controls.Add(version,1,0);root.Controls.Add(header,0,0);
         var tabs=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false};aaTab.Width=145;uiTab.Width=145;aaTab.FlatAppearance.BorderSize=0;uiTab.FlatAppearance.BorderSize=0;tabs.Controls.AddRange(new Control[]{aaTab,uiTab});root.Controls.Add(tabs,0,1);
         var pages=new Panel {Dock=DockStyle.Fill};aaPage.Dock=scenePage.Dock=DockStyle.Fill;pages.Controls.Add(aaPage);pages.Controls.Add(scenePage);root.Controls.Add(pages,0,2);
         var fields=Grid();aaPage.Controls.Add(fields);
         var sharpRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1};sharpRow.RowStyles.Add(new RowStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));sharp.Dock=DockStyle.Fill;sharp.Margin=Padding.Empty;sharpRow.Controls.Add(sharp,0,0);sharpValue.Dock=DockStyle.Fill;sharpValue.Margin=new Padding(8,0,0,0);sharpRow.Controls.Add(sharpValue,1,0);sharp.ValueChanged+=delegate{sharpValue.Text=(sharp.Value/100.0).ToString("0.00",System.Globalization.CultureInfo.InvariantCulture);};
         sharpValue.Leave+=delegate{decimal number;if(decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)&&number>=0&&number<=1)sharp.Value=(int)Math.Round(number*100);};
-        Row(fields,0,"抗锯齿算法",backend);Row(fields,1,"重建档位",quality);Row(fields,2,"运动估计质量",motionQuality);Row(fields,3,"锐化强度",sharpRow);Row(fields,4,"AA 规则",rule);
+        Row(fields,0,"抗锯齿算法",backend);Row(fields,1,"原生抗锯齿模式",quality);Row(fields,2,"运动估计质量",motionQuality);Row(fields,3,"锐化强度",sharpRow);Row(fields,4,"AA 规则",rule);
         var sceneFields=Grid(9,38);scenePage.Controls.Add(sceneFields);
         var budgetRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,RowCount=1,Margin=Padding.Empty};budgetRow.RowStyles.Add(new RowStyle(SizeType.Percent,100));budgetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));budgetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,70));budgetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,160));cacheSlider.Dock=cacheMB.Dock=DockStyle.Fill;cacheSlider.Margin=Padding.Empty;cacheMB.Margin=new Padding(6,2,6,2);adaptive.Margin=new Padding(3,7,0,0);budgetRow.Controls.Add(cacheSlider,0,0);budgetRow.Controls.Add(cacheMB,1,0);budgetRow.Controls.Add(adaptive,2,0);cacheSlider.ValueChanged+=delegate{cacheMB.Text=(cacheSlider.Value*128).ToString();};cacheMB.Leave+=delegate{int number;if(int.TryParse(cacheMB.Text,out number)&&number>=128&&number<=4096)cacheSlider.Value=(int)Math.Round(number/128.0);};
         var warmRow=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};warmRow.Controls.Add(diskCache);warmRow.Controls.Add(prewarm);
@@ -324,8 +324,8 @@ internal sealed class SettingsWindow : DarkForm
         tips.SetToolTip(capture,"仅用于诊断，GPU 回读会造成卡顿。");tips.SetToolTip(toggle,"只切换本抗锯齿 Mod 的注入文件。");
         tips.SetToolTip(sharpValue,"可填写 0.00–1.00；默认 0；需要时推荐 0.03–0.08。");
         tips.SetToolTip(rule,"无规则会处理最终画面，UI 文字也参与 AA，可能变软或残影。");
-        tips.SetToolTip(cacheMB,"估算预算：128–4096 MB，默认 512。较高分辨率或模型尺寸较多时可调高，不是严格的显存字节上限。");tips.SetToolTip(adaptive,"新建缓存时保留显存余量；显存不足会跳过额外模型 AA，不在对话中淘汰缓存。");tips.SetToolTip(prewarm,"后台预编译光流着色器，不恢复上次运行的画面历史。");tips.SetToolTip(quality,"这些档位只改变重建过程，不降低游戏本体的渲染分辨率。");
-        tips.SetToolTip(cacheFull,"默认跳过额外模型。排队重建在帧结束回收闲置缓存，下次准备资源，仍可能卡顿；不绕过显存保护。");
+        tips.SetToolTip(cacheMB,"估算预算：128–4096 MB，默认 512。较高分辨率或模型尺寸较多时可调高，不是严格的显存字节上限。");tips.SetToolTip(adaptive,"新建缓存时保留显存余量；显存不足会跳过额外模型 AA，不在对话中淘汰缓存。");tips.SetToolTip(prewarm,"后台预编译光流着色器，不恢复上次运行的画面历史。");tips.SetToolTip(quality,"只使用厂商的原生分辨率抗锯齿，保持游戏渲染尺寸。");
+        tips.SetToolTip(cacheFull,"默认跳过额外模型。排队准备在帧结束回收闲置缓存，下次准备资源，仍可能卡顿；不绕过显存保护。");
         LoadSettings();ShowTab(false);RefreshControls();RefreshStatus();
     }
     private static TableLayoutPanel Grid(int rows=6,int height=40)
@@ -348,13 +348,12 @@ internal sealed class SettingsWindow : DarkForm
     private void RefreshControls()
     {
         if(qualityBackend!=backend.SelectedIndex){int mode=quality.SelectedIndex>=0&&quality.SelectedIndex<qualityIds.Length?qualityIds[quality.SelectedIndex]:0;qualityBackend=backend.SelectedIndex;quality.Items.Clear();
-            if(qualityBackend==0){qualityIds=new[]{0,2,3,4,5};quality.Items.AddRange(new object[]{"DLAA","质量","均衡","性能","超级性能"});}
-            else if(qualityBackend==1){qualityIds=new[]{0,2,3,4,5};quality.Items.AddRange(new object[]{"Native AA","质量","均衡","性能","超级性能"});}
-            else if(qualityBackend==2){qualityIds=new[]{0,1,2,3,4,5};quality.Items.AddRange(new object[]{"Native AA","Ultra Quality","质量","均衡","性能","超级性能"});}
+            if(qualityBackend==0){qualityIds=new[]{0};quality.Items.Add("DLAA");}
+            else if(qualityBackend==1 || qualityBackend==2){qualityIds=new[]{0};quality.Items.Add("Native AA");}
             else{qualityIds=new[]{0};quality.Items.Add(qualityBackend==4?"Native AA（自动）":"不适用");}
             int index=Array.IndexOf(qualityIds,mode);quality.SelectedIndex=index>=0?index:mode==1&&qualityIds.Length>1?1:0;
         }
-        bool vendor=backend.SelectedIndex>=0 && backend.SelectedIndex!=3;quality.Enabled=vendor;motionQuality.Enabled=vendor;sharp.Enabled=sharpValue.Enabled=vendor;
+        bool vendor=backend.SelectedIndex>=0 && backend.SelectedIndex!=3;quality.Enabled=false;motionQuality.Enabled=vendor;sharp.Enabled=sharpValue.Enabled=vendor;
         rule.Enabled=vendor;sceneStatus.Text=rule.SelectedIndex==1?"Shader 签名保护":rule.SelectedIndex==2?"全屏处理（包含界面）":"引擎边界保护";
         preview.Enabled=vendor && rule.SelectedIndex!=2;
         sceneStatus.ForeColor=rule.SelectedIndex==2?Color.FromArgb(241,183,83):Theme.Accent;
@@ -384,7 +383,7 @@ internal sealed class SettingsWindow : DarkForm
             backend.SelectedIndex=b;
             string native=b==0?"DLAA":"Native AA";
             if(quality.Items[0].ToString()!=native || qualityIds[0]!=0)throw new Exception("原生档位映射测试失败。");
-            int expected=b==2?1:2;if(qualityIds[1]!=expected)throw new Exception("质量档位映射测试失败。");
+            if(quality.Items.Count!=1 || qualityIds.Length!=1 || quality.Enabled)throw new Exception("原生模式限定测试失败。");
         }
         sharp.Value=100;if(sharp.Value!=100 || sharpValue.Text!="1.00")throw new Exception("锐化上限测试失败。");
         sharp.Value=0;if(sharp.Value!=0 || sharpValue.Text!="0.00")throw new Exception("锐化关闭测试失败。");

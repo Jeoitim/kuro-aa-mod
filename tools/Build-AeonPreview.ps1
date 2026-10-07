@@ -11,13 +11,15 @@ if(!(Test-Path -LiteralPath $SourceDirectory)){
 }
 $revision=& git -C $SourceDirectory rev-parse HEAD
 if($revision -ne '8e8456848557d6e7282db3451473531a392209da'){throw 'Unexpected AeonSR source revision.'}
-$patch=Join-Path $PSScriptRoot 'aeonsr-preview.patch'
+foreach($patchName in @('aeonsr-preview.patch','aeonsr-native-aa.patch')){
+$patch=Join-Path $PSScriptRoot $patchName
 & git -C $SourceDirectory apply --ignore-space-change --reverse --check $patch 2>$null
 if($LASTEXITCODE){
     & git -C $SourceDirectory apply --ignore-space-change --check $patch
     if($LASTEXITCODE){throw 'AeonSR source conflicts with the preview patch.'}
     & git -C $SourceDirectory apply --ignore-space-change $patch
     if($LASTEXITCODE){throw 'AeonSR preview patch failed.'}
+}
 }
 & git -C $SourceDirectory submodule update --init --depth 1 external/reshade external/DLSS external/Vulkan-Headers
 if($LASTEXITCODE){throw 'AeonSR SDK setup failed.'}

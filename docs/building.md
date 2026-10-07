@@ -13,13 +13,13 @@
 ```
 
 输出为 `dist/GameFiles`。厂商 DLL 来自仓库的 `vendor/`，构建前校验 SHA256。
-AeonSR 固定于 commit `8e8456848557d6e7282db3451473531a392209da`，应用 `tools/aeonsr-preview.patch` 后编译本项目的角色视图扩展。
+AeonSR 固定于 commit `8e8456848557d6e7282db3451473531a392209da`，应用 `tools/aeonsr-preview.patch` 和 `tools/aeonsr-native-aa.patch` 后编译角色视图扩展与原生 AA 限定。
 
-省略 `-AeonPreviewDirectory` 可打包上游预编译 AeonSR，适用于主场景开发，但没有角色界面抗锯齿接口。正式 0.4.0 便携包使用扩展版。
+正式包必须提供 `-AeonPreviewDirectory`，不能使用上游预编译 add-on 替代扩展版。否则会缺少角色接口和原生模式限定。
 
 ## 验证
 
-保留 `tests/` 中的测试源码与脚本。安装 / 卸载检查覆盖默认配置、冲突拒绝与自有文件删除；DX11 夹具检查场景 / UI 隔离和角色纹理重建时的上下文复用。
+保留 `tests/` 中的测试源码与脚本。安装 / 卸载检查覆盖默认配置、冲突拒绝与自有文件删除；DX11 夹具检查场景 / UI 隔离和角色纹理处理时的上下文复用。
 
 ```powershell
 ./tests/Install.Tests.ps1 -PackageDirectory ./dist/GameFiles -OutputDirectory ./build/install-test

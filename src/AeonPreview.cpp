@@ -60,6 +60,7 @@ void preview_release_device(reshade::api::device *device) {
 
 // ABI v2 retains retired contexts until reuse or runtime teardown.
 extern "C" __declspec(dllexport) unsigned AeonSRPreviewVersion() { return 2; }
+extern "C" __declspec(dllexport) unsigned AeonSRNativeAAVersion() { return 1; }
 extern "C" __declspec(dllexport) void AeonSRReleasePreview(reshade::api::effect_runtime *runtime, uint64_t key) {
     for(auto &entry:aeon_sr::views){
         if(entry.first.first==runtime && entry.second->texture_key==key){entry.second->retired=true;entry.second->reset=true;}
@@ -178,7 +179,7 @@ static int process_preview(reshade::api::effect_runtime *runtime,
         if (v.flow.has_history()) {
             inputs.have_motion_vectors = true; inputs.motion_provider = MotionProvider::Internal;
             inputs.engine.motion = v.flow.motion(); inputs.engine.motion_state = OpticalFlowD3D12::kPublishedState;
-            UpscalerParams params; params.quality_mode = settings.upscale_mode; params.render_preset = settings.render_preset;
+            UpscalerParams params; params.quality_mode = 0; params.render_preset = settings.render_preset;
             const auto now=std::chrono::steady_clock::now();
             const float elapsed=std::chrono::duration<float,std::milli>(now-v.time).count();
             params.sharpness = settings.sharpness; params.frame_time_ms = v.time.time_since_epoch().count()==0 ? 16.67f : std::clamp(elapsed,1.0f,100.0f); params.reset = v.reset;
