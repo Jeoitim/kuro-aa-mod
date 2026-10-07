@@ -62,7 +62,9 @@ int main(int argc,char **argv)
     const bool uiOnly=argc > 2 && std::strcmp(argv[2],"ui-only")==0;
     const bool uiAux=argc > 2 && std::strcmp(argv[2],"ui-aux")==0;
     const bool uiFirstAux=argc > 2 && std::strcmp(argv[2],"ui-first-aux")==0;
-    const bool previewRecreate=argc > 2 && std::strcmp(argv[2],"preview-recreate")==0;
+    const bool previewBudget=argc > 2 && std::strcmp(argv[2],"preview-budget")==0;
+    const bool previewMixed=previewBudget || (argc > 2 && std::strcmp(argv[2],"preview-mixed")==0);
+    const bool previewRecreate=previewMixed || (argc > 2 && std::strcmp(argv[2],"preview-recreate")==0);
     const bool previewTest=previewRecreate || (argc > 2 && std::strcmp(argv[2],"preview")==0);
     const bool letterbox=uiFirst || uiOnly || uiAux || uiFirstAux || (argc > 2 && std::strcmp(argv[2],"letterbox")==0);
     const bool offscreen=previewTest || letterbox || (argc > 2 && std::strcmp(argv[2],"offscreen")==0);
@@ -96,6 +98,8 @@ int main(int argc,char **argv)
         depthDesc.Format=DXGI_FORMAT_D32_FLOAT; depthDesc.SampleDesc.Count=1; depthDesc.BindFlags=D3D11_BIND_DEPTH_STENCIL;
         ID3D11Texture2D *depth=nullptr; ID3D11DepthStencilView *dsv=nullptr;
         Check(device->CreateTexture2D(&depthDesc,nullptr,&depth),"depth"); Check(device->CreateDepthStencilView(depth,nullptr,&dsv),"DSV");
+        ID3D11Texture2D *mainDepth=nullptr;ID3D11DepthStencilView *mainDSV=nullptr;
+        if(previewMixed){Check(device->CreateTexture2D(&depthDesc,nullptr,&mainDepth),"main depth");Check(device->CreateDepthStencilView(mainDepth,nullptr,&mainDSV),"main DSV");}
         ID3DBlob *vsCode=nullptr,*psCode=nullptr,*hudVSCode=nullptr,*hudPSCode=nullptr,*copyCode=nullptr,*errors=nullptr;
         Check(D3DCompile(Shader,std::strlen(Shader),"smoke",nullptr,nullptr,"VS","vs_5_0",0,0,&vsCode,&errors),"vertex compile"); Release(errors);
         Check(D3DCompile(Shader,std::strlen(Shader),"smoke",nullptr,nullptr,"PS","ps_5_0",0,0,&psCode,&errors),"pixel compile"); Release(errors);
@@ -130,22 +134,37 @@ int main(int argc,char **argv)
             if(previewRecreate && i>0 && i%120==0){
                 context->OMSetRenderTargets(0,nullptr,nullptr);
                 D3D11_TEXTURE2D_DESC d{};scene->GetDesc(&d);
+                if(previewMixed){const unsigned phase=(i/120)%(previewBudget?6:3);
+                    const unsigned widths[6]={640,320,512,480,448,416};const unsigned heights[6]={360,180,288,270,252,234};
+                    d.Width=widths[phase];d.Height=heights[phase];}
                 ID3D11Texture2D *next=nullptr;Check(device->CreateTexture2D(&d,nullptr,&next),"replacement preview");
                 Release(sceneView);Release(sceneTarget);Release(scene);scene=next;
                 Check(device->CreateRenderTargetView(scene,nullptr,&sceneTarget),"replacement RTV");
                 Check(device->CreateShaderResourceView(scene,nullptr,&sceneView),"replacement SRV");
+                if(previewMixed){Release(dsv);Release(depth);depthDesc.Width=d.Width;depthDesc.Height=d.Height;
+                    Check(device->CreateTexture2D(&depthDesc,nullptr,&depth),"replacement depth");Check(device->CreateDepthStencilView(depth,nullptr,&dsv),"replacement DSV");}
             }
             MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
             float params[4]={0.12f*std::sin(i*0.012f),float(i),previewTest?1.0f:0.0f,0}; context->UpdateSubresource(cb,0,nullptr,params,0,0);
             const float background[4]={0.09f,0.13f,0.18f,previewTest?0.0f:1.0f};
+            if(previewMixed){
+                // Give the main-scene route its own fixed-size geometry, as in a dialogue over gameplay.
+                context->OMSetRenderTargets(1,&target,mainDSV);context->ClearDepthStencilView(mainDSV,D3D11_CLEAR_DEPTH,1,0);
+                context->OMSetDepthStencilState(nullptr,0);context->RSSetState(rs);context->RSSetViewports(1,&viewport);
+                context->VSSetShader(vs,nullptr,0);context->PSSetShader(ps,nullptr,0);context->VSSetConstantBuffers(0,1,&cb);
+                context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);context->Draw(3,0);
+            }
             ID3D11RenderTargetView *renderTarget=offscreen?sceneTarget:target;
             context->OMSetRenderTargets(1,&renderTarget,dsv); context->ClearRenderTargetView(renderTarget,background); context->ClearDepthStencilView(dsv,D3D11_CLEAR_DEPTH,1,0);
             if(uiFirst)SubmitUI(context,renderTarget,hudDepthState,hudVS,hudPS,cb);
             if(uiFirstAux)SubmitUI(context,auxiliaryTarget,hudDepthState,hudVS,hudPS,cb);
             context->OMSetDepthStencilState(nullptr,0);context->OMSetRenderTargets(1,&renderTarget,dsv);
-            context->RSSetState(rs); context->RSSetViewports(1,&viewport); context->VSSetShader(vs,nullptr,0); context->PSSetShader(ps,nullptr,0);
+            D3D11_VIEWPORT sceneViewport=viewport;
+            if(previewMixed){D3D11_TEXTURE2D_DESC d{};scene->GetDesc(&d);sceneViewport.Width=float(d.Width);sceneViewport.Height=float(d.Height);}
+            context->RSSetState(rs); context->RSSetViewports(1,&sceneViewport); context->VSSetShader(vs,nullptr,0); context->PSSetShader(ps,nullptr,0);
             context->VSSetConstantBuffers(0,1,&cb); context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST); if(!uiOnly)context->Draw(3,0);
             if(previewTest){
+                context->RSSetViewports(1,&viewport);
                 const float backdrop[4]={0.09f,0.13f,0.18f,1};context->ClearRenderTargetView(target,backdrop);
                 SubmitUI(context,target,hudDepthState,hudVS,hudPS,cb);
                 params[3]=1;context->UpdateSubresource(cb,0,nullptr,params,0,0);
@@ -178,6 +197,7 @@ int main(int argc,char **argv)
         std::cout << "Rendered " << frames << " frames, mean RGB=" << sum/(640*360*3) << "\n";
         if (sum/(640*360*3)<10) throw std::runtime_error("Blank GPU output");
         Release(auxiliaryTarget);Release(auxiliary);
+        Release(mainDSV);Release(mainDepth);
         context->ClearState(); context->Flush(); Release(stage); Release(cb); Release(rs); Release(vs); Release(ps); Release(hudVS); Release(hudPS); Release(copyPS); Release(copyCode); Release(scene); Release(sceneTarget); Release(sceneView); Release(sceneSampler); Release(hudVSCode); Release(hudPSCode); Release(hudDepthState); Release(vsCode); Release(psCode); Release(dsv); Release(depth); Release(target); Release(back); Release(swap); Release(context); Release(device); DestroyWindow(window);
         return 0;
     } catch(const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }

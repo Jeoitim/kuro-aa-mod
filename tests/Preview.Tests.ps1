@@ -1,12 +1,13 @@
-param([Parameter(Mandatory=$true)][string]$PackageDirectory,[Parameter(Mandatory=$true)][string]$NativeDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[switch]$VendorPreview,[switch]$RecreateViews,[int[]]$BackendIds=@(0,1,2))
+param([Parameter(Mandatory=$true)][string]$PackageDirectory,[Parameter(Mandatory=$true)][string]$NativeDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[switch]$VendorPreview,[switch]$RecreateViews,[switch]$MixedSizes,[switch]$BudgetCheck,[int[]]$BackendIds=@(0,1,2))
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath $root){throw 'Use fresh preview test directory.'}
 $package=(Resolve-Path $PackageDirectory).Path;$fixture=Join-Path (Resolve-Path $NativeDirectory).Path 'fixture.exe'
 function Run([string]$directory){
-    $mode=if($RecreateViews){'preview-recreate'}else{'preview'}
-    $p=Start-Process -FilePath (Join-Path $directory 'fixture.exe') -ArgumentList '420',$mode -WorkingDirectory $directory -WindowStyle Hidden -RedirectStandardOutput (Join-Path $directory 'stdout.log') -PassThru
-    $handle=$p.Handle;if(!$p.WaitForExit(60000)){throw 'Preview fixture timed out.'};if($p.ExitCode){throw 'Preview fixture failed.'}
+    $mode=if($BudgetCheck){'preview-budget'}elseif($MixedSizes){'preview-mixed'}elseif($RecreateViews){'preview-recreate'}else{'preview'}
+    $frames=if($BudgetCheck){720}elseif($MixedSizes){840}else{420}
+    $p=Start-Process -FilePath (Join-Path $directory 'fixture.exe') -ArgumentList $frames,$mode -WorkingDirectory $directory -WindowStyle Hidden -RedirectStandardOutput (Join-Path $directory 'stdout.log') -PassThru
+    $handle=$p.Handle;if(!$p.WaitForExit(120000)){throw 'Preview fixture timed out.'};if($p.ExitCode){throw 'Preview fixture failed.'}
 }
 $baseline=Join-Path $root 'baseline';New-Item -ItemType Directory -Path $baseline -Force | Out-Null
 Copy-Item -LiteralPath $fixture -Destination $baseline;Run $baseline
@@ -29,9 +30,12 @@ foreach($case in $cases){
     $log=Get-Content (Join-Path $dir 'KuroAA\KuroUI.log') -Raw
     $aeon=Get-Content (Join-Path $dir 'KuroAA\AeonSR.log') -Raw
     $reuses=([regex]::Matches($aeon,'reusing warm preview context')).Count
-    $result=[pscustomobject]@{Rule=$rule;Backend=$backend;VendorPreview=$true;WarmReuses=$reuses;ModelDifferentPixels=$model;UIDifferentPixels=$ui;AlphaDifferentPixels=$alpha;PreviewExecuted=($log -match 'preview AA=[1-9]')}
+    $created=([regex]::Matches($aeon,'creating bounded preview context')).Count
+    $result=[pscustomobject]@{Rule=$rule;Backend=$backend;VendorPreview=$true;ContextsCreated=$created;WarmReuses=$reuses;ModelDifferentPixels=$model;UIDifferentPixels=$ui;AlphaDifferentPixels=$alpha;PreviewExecuted=($log -match 'preview AA=[1-9]')}
     $results+=$result;$result|ConvertTo-Json -Compress|Write-Output
     [IO.File]::WriteAllText((Join-Path $root 'results.json'),($results|ConvertTo-Json))
-    if(!$result.PreviewExecuted -or $model -eq 0 -or $ui -ne 0 -or $alpha -ne 0){throw 'Preview AA isolation or state restoration failed.'}
-    if($RecreateViews -and $reuses -ne 3){throw 'Preview context was not reused for all three texture replacements.'}
+    if(!$result.PreviewExecuted -or (!$BudgetCheck -and $model -eq 0) -or $ui -ne 0 -or $alpha -ne 0){throw 'Preview AA isolation or state restoration failed.'}
+    if($BudgetCheck -and ($created -ne 4 -or $model -ne 0)){throw 'Cache limit did not preserve the uncached model unchanged.'}
+    if(!$BudgetCheck -and $MixedSizes -and ($reuses -ne 4 -or $created -ne 3)){throw 'Mixed-size views rebuilt or evicted a cached context.'}
+    if(!$BudgetCheck -and !$MixedSizes -and $RecreateViews -and $reuses -ne 3){throw 'Preview context was not reused for all three texture replacements.'}
 }
