@@ -6,6 +6,8 @@
 #include <map>
 #include <memory>
 #include <chrono>
+#include <deque>
+#include "PreviewBudget.hpp"
 
 namespace aeon_sr {
 namespace {
@@ -44,11 +46,11 @@ struct View {
 using Key = std::pair<reshade::api::effect_runtime *, uint64_t>;
 std::map<Key, std::unique_ptr<View>> views;
 uint64_t next_view_id = 0;
-constexpr size_t max_cached_views = 4;
-constexpr uint64_t max_cached_pixels = 4ull * 1920 * 1080;
+struct Pending { uint32_t width,height,format;uint64_t frame; };
+std::map<reshade::api::effect_runtime*,std::deque<Pending>> pending;
 }
 bool preview_device_building() { return creating_view; }
-void preview_release_all() { views.clear(); }
+void preview_release_all() { pending.clear();views.clear(); }
 void preview_release_device(reshade::api::device *device) {
     for (auto it = views.begin(); it != views.end();) {
         if (it->second->game == device) it = views.erase(it); else ++it;
@@ -64,9 +66,26 @@ extern "C" __declspec(dllexport) void AeonSRReleasePreview(reshade::api::effect_
     }
 }
 extern "C" __declspec(dllexport) void AeonSRReleasePreviewRuntime(reshade::api::effect_runtime *runtime) {
+    aeon_sr::pending.erase(runtime);
     for(auto it=aeon_sr::views.begin();it!=aeon_sr::views.end();){
         if(it->first.first==runtime)it=aeon_sr::views.erase(it);else ++it;
     }
+}
+extern "C" __declspec(dllexport) void AeonSRServicePreviewQueue(reshade::api::effect_runtime *runtime,uint64_t frame){
+    using namespace aeon_sr;
+    auto list=pending.find(runtime);if(list==pending.end() || list->second.empty())return;
+    const auto request=list->second.front();
+    if(frame>request.frame+120){list->second.pop_front();return;}
+    HMODULE module=nullptr;GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(&creating_view),&module);
+    const auto limits=kuro_budget::read(module_directory(module));if(!limits.queue){pending.erase(list);return;}
+    uint64_t pixels=0;unsigned count=0;auto idle=views.end();
+    for(auto it=views.begin();it!=views.end();++it){
+        if(it->first.first!=runtime)continue;++count;pixels+=uint64_t(it->second->width)*it->second->height;
+        if((it->second->retired || frame>it->second->last_frame+2) && (idle==views.end() || it->second->last_frame<idle->second->last_frame))idle=it;
+    }
+    auto *device=reinterpret_cast<ID3D11Device*>(runtime->get_device()->get_native());
+    if(kuro_budget::allows_device(limits,pixels,count,uint64_t(request.width)*request.height,device)){list->second.pop_front();return;}
+    if(idle!=views.end()){views.erase(idle);diag_info("preview",L"queued preview rebuild: retired one idle context at frame end");}
 }
 static int process_preview(reshade::api::effect_runtime *runtime,
     reshade::api::command_list *commands, uint64_t color, uint64_t key, uint64_t frame) {
@@ -105,7 +124,15 @@ static int process_preview(reshade::api::effect_runtime *runtime,
                 ++count;
                 pixels+=uint64_t(candidate->second->width)*candidate->second->height;
             }
-            if(count>=max_cached_views || pixels+uint64_t(desc.texture.width)*desc.texture.height>max_cached_pixels){
+            HMODULE module=nullptr;GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(&creating_view),&module);
+            const auto limits=kuro_budget::read(module_directory(module));
+            auto *native=reinterpret_cast<ID3D11Device*>(device->get_native());
+            if(!kuro_budget::allows_device(limits,pixels,static_cast<unsigned>(count),uint64_t(desc.texture.width)*desc.texture.height,native)){
+                if(limits.queue && kuro_budget::estimate(uint64_t(desc.texture.width)*desc.texture.height,1)<=limits.bytes){
+                    auto &list=pending[runtime];auto request=std::find_if(list.begin(),list.end(),[&](const Pending &p){return p.width==desc.texture.width && p.height==desc.texture.height && p.format==static_cast<uint32_t>(desc.texture.format);});
+                    if(request!=list.end())request->frame=frame;
+                    else if(list.size()<8)list.push_back({desc.texture.width,desc.texture.height,static_cast<uint32_t>(desc.texture.format),frame});
+                }
                 diag_state("preview-cache-full",DiagLevel::Info,"preview",L"preview cache budget reached; extra view left unchanged, no synchronous eviction");
                 return 0;
             }
@@ -116,6 +143,12 @@ static int process_preview(reshade::api::effect_runtime *runtime,
         }
     }
     auto &v = *it->second;
+    auto queued=pending.find(runtime);
+    if(queued!=pending.end()){
+        auto &list=queued->second;
+        list.erase(std::remove_if(list.begin(),list.end(),[&](const Pending &p){return p.width==v.width && p.height==v.height && p.format==v.format;}),list.end());
+        if(list.empty())pending.erase(queued);
+    }
     v.texture_key=key;
     if (!v.bridge) {
         creating_view = true;

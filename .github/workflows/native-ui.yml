@@ -22,7 +22,7 @@ jobs:
           $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           & "$vsPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
           New-Item -ItemType Directory artifacts | Out-Null
-          cl.exe /nologo /std:c++17 /EHsc /O2 /MT /LD /DNOMINMAX /DWIN32_LEAN_AND_MEAN /Isdk/include src/KuroUI.cpp /link /OUT:artifacts/KuroUI.addon64 d3d11.lib d3dcompiler.lib user32.lib
+          cl.exe /nologo /std:c++17 /EHsc /O2 /MT /LD /DNOMINMAX /DWIN32_LEAN_AND_MEAN /Isdk/include src/KuroUI.cpp /link /OUT:artifacts/KuroUI.addon64 d3d11.lib d3dcompiler.lib bcrypt.lib user32.lib
           if ($LASTEXITCODE) { throw 'Native integration compilation failed' }
           cl.exe /nologo /std:c++17 /EHsc /O2 /MT /DNOMINMAX /DWIN32_LEAN_AND_MEAN tests/smoke_d3d11.cpp /link /OUT:artifacts/smoke_ui.exe d3d11.lib dxgi.lib d3dcompiler.lib user32.lib
           if ($LASTEXITCODE) { throw 'Fixture compilation failed' }

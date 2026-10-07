@@ -12,6 +12,6 @@ if(!(Get-Command cl.exe -ErrorAction SilentlyContinue)) {
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 Push-Location $output
 try {
-    & cl.exe /nologo /std:c++17 /EHsc /O2 /MT /LD /DNOMINMAX /DWIN32_LEAN_AND_MEAN ("/I"+(Join-Path $sdk 'include')) (Join-Path $root 'src\KuroUI.cpp') /link ("/OUT:"+(Join-Path $output 'KuroUI.addon64')) d3d11.lib d3dcompiler.lib user32.lib
+    & cl.exe /nologo /std:c++17 /EHsc /O2 /MT /LD /DNOMINMAX /DWIN32_LEAN_AND_MEAN ("/I"+(Join-Path $sdk 'include')) (Join-Path $root 'src\KuroUI.cpp') /link ("/OUT:"+(Join-Path $output 'KuroUI.addon64')) d3d11.lib d3dcompiler.lib bcrypt.lib user32.lib
     if($LASTEXITCODE -ne 0) { throw 'Native UI compilation failed.' }
 } finally { Pop-Location }

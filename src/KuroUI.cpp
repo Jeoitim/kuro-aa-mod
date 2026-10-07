@@ -16,12 +16,14 @@
 #include <unordered_set>
 #include <vector>
 #include "PreviewVendor.hpp"
+#include "RenderLayoutTrace.hpp"
 
 using namespace reshade;
 using namespace reshade::api;
 namespace {
 template<class T> void release(T *&p) { if(p) { p->Release(); p=nullptr; } }
 std::filesystem::path root;
+RenderLayoutTrace render_layouts;
 std::mutex lock;
 std::atomic<bool> tracking{false};
 thread_local bool inside_early=false;
@@ -191,6 +193,13 @@ void on_end(effect_runtime *runtime)
 {
     auto it=states.find(runtime); if(it==states.end()) return;
     State &s=*it->second;
+    inside_early=true;
+    s.preview_vendor.service_queue();
+    using Service=void(*)(effect_runtime*,uint64_t);
+    auto module=GetModuleHandleW(L"AeonSR.addon64");
+    auto service=module?reinterpret_cast<Service>(GetProcAddress(module,"AeonSRServicePreviewQueue")):nullptr;
+    if(service)service(runtime,s.frame);
+    inside_early=false;
     if(s.frame % 300 == 0) {
         note("Kuro AA: early frames="+std::to_string(s.early_count)+", engine frames="+std::to_string(s.engine_count)+", unmatched skipped="+std::to_string(s.skipped_count)+", UI-before-scene bypass="+std::to_string(s.ui_blocked_frames)+", preview AA="+std::to_string(s.preview_count)+", preview failures="+std::to_string(s.preview_failures));
         if(s.trace) dump(s);
@@ -214,7 +223,7 @@ void on_pipeline(device *dev,pipeline_layout,uint32_t count,const pipeline_subob
     for(uint32_t i=0;i<count;++i) {
         if((objects[i].type==pipeline_subobject_type::pixel_shader || objects[i].type==pipeline_subobject_type::vertex_shader) && objects[i].count) {
             const auto &shader=*static_cast<const shader_desc*>(objects[i].data);
-            if(shader.code && shader.code_size) { info.hash=shader_hash(shader.code,shader.code_size); relevant=true; }
+            if(shader.code && shader.code_size) { info.hash=shader_hash(shader.code,shader.code_size); relevant=true;render_layouts.capture(info.hash,objects[i].type==pipeline_subobject_type::vertex_shader?"VS":"PS",shader.code,shader.code_size); }
         }
         if(objects[i].type==pipeline_subobject_type::depth_stencil_state && objects[i].count) {
             info.depth_test=static_cast<const depth_stencil_desc*>(objects[i].data)->depth_enable; relevant=true;
@@ -341,6 +350,13 @@ bool draw(command_list *cmd,uint32_t vertices)
     if(!interested) return false;
     auto resource=cmd->get_device()->get_resource_from_view(c.target);
     auto desc=cmd->get_device()->get_resource_desc(resource);
+    if(depth_active && desc.texture.width>=1280 && desc.texture.height>=720 && static_cast<unsigned>(desc.texture.format)==10){
+        for(const auto &entry:states)if(entry.second->runtime->get_device()==cmd->get_device()){
+            auto *context=reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());inside_early=true;
+            render_layouts.sample(c.vs,entry.second->frame,context,desc.texture.width,desc.texture.height);
+            render_layouts.sample(c.ps,entry.second->frame,context,desc.texture.width,desc.texture.height);inside_early=false;
+        }
+    }
     for(auto &entry:states) {
         State &s=*entry.second;
         if(s.runtime->get_device()!=cmd->get_device() || s.in_present) continue;
@@ -484,6 +500,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID)
     if(reason==DLL_PROCESS_ATTACH) {
         if(!register_addon(module)) return FALSE;
         wchar_t path[MAX_PATH]{}; GetModuleFileNameW(module,path,MAX_PATH); root=std::filesystem::path(path).parent_path();
+        render_layouts.enable(root);
         register_event<addon_event::init_effect_runtime>(on_init); register_event<addon_event::destroy_effect_runtime>(on_destroy);
         register_event<addon_event::destroy_resource>(on_destroy_resource);
         register_event<addon_event::present>(on_present);

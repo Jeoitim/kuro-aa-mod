@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$PackageDirectory,[Parameter(Mandatory=$true)][string]$NativeDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[switch]$VendorPreview,[switch]$RecreateViews,[switch]$MixedSizes,[switch]$BudgetCheck,[int[]]$BackendIds=@(0,1,2))
+param([Parameter(Mandatory=$true)][string]$PackageDirectory,[Parameter(Mandatory=$true)][string]$NativeDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[switch]$VendorPreview,[switch]$RecreateViews,[switch]$MixedSizes,[switch]$BudgetCheck,[switch]$QueueRebuild,[int[]]$BackendIds=@(0,1,2))
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath $root){throw 'Use fresh preview test directory.'}
@@ -22,7 +22,8 @@ foreach($case in $cases){
     Copy-Item -LiteralPath $fixture -Destination $dir
     $enabled=1;$backend=$case.Split('-')[1];$vendorView=1
     [IO.File]::WriteAllText((Join-Path $dir 'KuroAA\AeonSR.ini'),"[AeonSR]`nEnabled=$enabled`nUpscaler=$backend`nUpscaleMode=0`nSpatialJitter=0`nKeepInterface=0`nNeuralRender=0`nSharpness=0`n")
-    [IO.File]::WriteAllText((Join-Path $dir 'KuroAA\KuroUI.ini'),"[KuroUI]`nAARule=$rule`nPreviewVendorAA=$vendorView`nAllowOffscreenTarget=1`nEarlyUIShaderHash=$($v['HUD pixel shader hash'])`nEarlyUIVertexShaderHash=0`nEngineUIFunctionRVA=$($v['Engine UI RVA'])`nEngineUIFunctionHash=$($v['Engine UI hash'])`nEngineImageTimestamp=$($v['Engine timestamp'])`nEngineImageSize=$($v['Engine image size'])`n")
+    $policy=if($QueueRebuild){1}else{0}
+    [IO.File]::WriteAllText((Join-Path $dir 'KuroAA\KuroUI.ini'),"[KuroUI]`nAARule=$rule`nPreviewVendorAA=$vendorView`nPreviewCacheFullPolicy=$policy`nAllowOffscreenTarget=1`nEarlyUIShaderHash=$($v['HUD pixel shader hash'])`nEarlyUIVertexShaderHash=0`nEngineUIFunctionRVA=$($v['Engine UI RVA'])`nEngineUIFunctionHash=$($v['Engine UI hash'])`nEngineImageTimestamp=$($v['Engine timestamp'])`nEngineImageSize=$($v['Engine image size'])`n")
     Run $dir;$image=[IO.File]::ReadAllBytes((Join-Path $dir 'smoke.bmp'))
     $model=0;$ui=0;$alpha=0
     for($y=40;$y -lt 250;$y++){for($x=40;$x -lt 600;$x++){$o=54+($y*640+$x)*4;if($raw[$o] -ne $image[$o] -or $raw[$o+1] -ne $image[$o+1] -or $raw[$o+2] -ne $image[$o+2]){$model++};if($raw[$o+3] -ne $image[$o+3]){$alpha++}}}
@@ -35,7 +36,8 @@ foreach($case in $cases){
     $results+=$result;$result|ConvertTo-Json -Compress|Write-Output
     [IO.File]::WriteAllText((Join-Path $root 'results.json'),($results|ConvertTo-Json))
     if(!$result.PreviewExecuted -or (!$BudgetCheck -and $model -eq 0) -or $ui -ne 0 -or $alpha -ne 0){throw 'Preview AA isolation or state restoration failed.'}
-    if($BudgetCheck -and ($created -ne 4 -or $model -ne 0)){throw 'Cache limit did not preserve the uncached model unchanged.'}
+    if($BudgetCheck -and !$QueueRebuild -and ($created -ne 4 -or $model -ne 0)){throw 'Cache limit did not preserve the uncached model unchanged.'}
+    if($BudgetCheck -and $QueueRebuild -and ($created -ne 6 -or $model -eq 0 -or $aeon -notmatch 'queued preview rebuild')){throw 'Queued cache rebuild did not resume AA for the final model.'}
     if(!$BudgetCheck -and $MixedSizes -and ($reuses -ne 4 -or $created -ne 3)){throw 'Mixed-size views rebuilt or evicted a cached context.'}
     if(!$BudgetCheck -and !$MixedSizes -and $RecreateViews -and $reuses -ne 3){throw 'Preview context was not reused for all three texture replacements.'}
 }

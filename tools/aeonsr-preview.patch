@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 6786cf2..2e20ea9 100644
+index 6786cf2..dcce165 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -40,6 +40,13 @@ set(AEONSR_LICENSE_FILES
@@ -24,8 +24,38 @@ index 6786cf2..2e20ea9 100644
    src/core/addon_main.cpp
    src/core/app.cpp
    src/upscalers/backend_dlss.cpp
+@@ -193,6 +201,7 @@ endif()
+ set_target_properties(AeonSR PROPERTIES OUTPUT_NAME "AeonSR" PREFIX "" SUFFIX "${AEONSR_ADDON_EXT}")
+ 
+ target_include_directories(AeonSR PRIVATE
++  "${CMAKE_CURRENT_SOURCE_DIR}/../../src"
+   "${CMAKE_CURRENT_SOURCE_DIR}/include"
+   "${RESHADE_ROOT}/include"
+   "${RESHADE_ROOT}/deps/imgui"
+@@ -204,7 +213,7 @@ target_include_directories(AeonSR PRIVATE
+   "${RESHADE_ROOT}/source"
+   "${RESHADE_ROOT}/deps/spirv/include/spirv/unified1")
+ target_compile_definitions(AeonSR PRIVATE ${AEONSR_COMMON_DEFINITIONS})
+-target_link_libraries(AeonSR PRIVATE aeon_sr_minhook
++target_link_libraries(AeonSR PRIVATE aeon_sr_minhook bcrypt
+   d3d11 d3d12 d3d10 d3d9 dxgi d3dcompiler opengl32 gdi32 shell32 ole32)
+ 
+ if(AEONSR_X64)
+diff --git a/include/aeon_sr/motion/optical_flow.hpp b/include/aeon_sr/motion/optical_flow.hpp
+index 4373143..033a831 100644
+--- a/include/aeon_sr/motion/optical_flow.hpp
++++ b/include/aeon_sr/motion/optical_flow.hpp
+@@ -14,6 +14,8 @@ namespace aeon_sr {
+ class OpticalFlowD3D12 {
+ public:
+ 	enum class Quality : uint8_t { Balanced = 0, High = 1 };
++	static void start_shader_prewarm();
++	static void stop_shader_prewarm();
+ 
+ 	~OpticalFlowD3D12();
+ 
 diff --git a/src/core/addon_main.cpp b/src/core/addon_main.cpp
-index 8d5aa66..c50fd32 100644
+index 8d5aa66..4f3e9b3 100644
 --- a/src/core/addon_main.cpp
 +++ b/src/core/addon_main.cpp
 @@ -13,17 +13,24 @@
@@ -53,14 +83,90 @@ index 8d5aa66..c50fd32 100644
  	if (auto *a = app())
  		a->on_destroy_device(device);
  }
-@@ -199,6 +206,7 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon_module, HMODULE
+@@ -175,6 +182,7 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon_module, HMODULE re
+ 	snapshot_native_dlss();
+ 
+ 	create_app(addon_module);
++	if(app()->settings().enabled)OpticalFlowD3D12::start_shader_prewarm();
+ 
+ 	reshade::register_event<reshade::addon_event::init_device>(on_init_device);
+ 	reshade::register_event<reshade::addon_event::destroy_device>(on_destroy_device);
+@@ -199,6 +207,8 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon_module, HMODULE
  		RemoveVectoredExceptionHandler(g_driver_fault_handler);
  		g_driver_fault_handler = nullptr;
  	}
 +	preview_release_all();
++	OpticalFlowD3D12::stop_shader_prewarm();
  	destroy_app();
  	diag_set_sink(nullptr);
  	diag_info("aeonsr", L"add-on unloaded");
+diff --git a/src/motion/optical_flow.cpp b/src/motion/optical_flow.cpp
+index 1808dfa..f40a454 100644
+--- a/src/motion/optical_flow.cpp
++++ b/src/motion/optical_flow.cpp
+@@ -1,6 +1,8 @@
+ #include "aeon_sr/motion/optical_flow.hpp"
+ 
+ #include <d3dcompiler.h>
++#include "ShaderCompileCache.hpp"
++#include "aeon_sr/core/diagnostics.hpp"
+ #include <string>
+ 
+ #include <algorithm>
+@@ -11,6 +13,8 @@
+ 
+ namespace aeon_sr {
+ namespace {
++std::thread shader_prewarmer;
++std::atomic<bool> cancel_prewarm{false};
+ 
+ template <class T>
+ void safe_release(T *&p) noexcept
+@@ -288,6 +292,26 @@ bool OpticalFlowD3D12::make_tex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT fmt,
+ 	return true;
+ }
+ 
++void OpticalFlowD3D12::start_shader_prewarm()
++{
++	if(shader_prewarmer.joinable() || !kuro_shader_cache::option(L"StartupPrewarm") || !kuro_shader_cache::option(L"ShaderDiskCache"))return;
++	cancel_prewarm=false;
++	try { shader_prewarmer=std::thread([]{
++		SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_BELOW_NORMAL);
++		for(uint32_t q=0;q<2 && !cancel_prewarm;++q){
++			const D3D_SHADER_MACRO macros[]={{"AEON_FLOW_QUALITY",q==0?"1":"2"},{nullptr,nullptr}};
++			for(uint32_t i=0;i<kFirstModelShader && !cancel_prewarm;++i){
++				ID3DBlob *code=nullptr,*error=nullptr;
++				kuro_shader_cache::compile(kFlowHlsl,std::strlen(kFlowHlsl),"aeon_flow",macros,nullptr,entry_of(i),"cs_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&error);
++				safe_release(code);safe_release(error);
++			}
++		}
++		diag_logf(DiagLevel::Info,"cache",L"flow shader prewarm finished: memory hits=%u disk hits=%u compiles=%u",
++			kuro_shader_cache::memory_hits.load(),kuro_shader_cache::disk_hits.load(),kuro_shader_cache::misses.load());
++	}); } catch (...) { diag_warn("cache",L"shader prewarm thread unavailable; compile on demand"); }
++}
++void OpticalFlowD3D12::stop_shader_prewarm(){cancel_prewarm=true;if(shader_prewarmer.joinable())shader_prewarmer.join();}
++
+ bool OpticalFlowD3D12::make_pipelines(std::wstring *error)
+ {
+ 	D3D12_DESCRIPTOR_RANGE ranges[2]{};
+@@ -361,7 +385,7 @@ bool OpticalFlowD3D12::make_pipelines(std::wstring *error)
+ 		};
+ 		for (uint32_t i = 0; i < kFirstModelShader; ++i) {
+ 			ID3DBlob *cs = nullptr, *cerr = nullptr;
+-			if (FAILED(D3DCompile(kFlowHlsl, std::strlen(kFlowHlsl), "aeon_flow", defines,
++			if (FAILED(kuro_shader_cache::compile(kFlowHlsl, std::strlen(kFlowHlsl), "aeon_flow", defines,
+ 					nullptr, entry_of(i), "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &cs, &cerr))) {
+ 				std::wstring detail = L"optical flow: ";
+ 				detail += widen_ascii(entry_of(i));
+@@ -427,7 +451,7 @@ void OpticalFlowD3D12::build_model_pipelines()
+ 			break;
+ 		}
+ 		ID3DBlob *cs = nullptr, *cerr = nullptr;
+-		if (FAILED(D3DCompile(kFlowHlsl, std::strlen(kFlowHlsl), "aeon_flow", nullptr,
++		if (FAILED(kuro_shader_cache::compile(kFlowHlsl, std::strlen(kFlowHlsl), "aeon_flow", nullptr,
+ 				nullptr, entry_of(i), "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &cs, &cerr))) {
+ 			why = L"camera model: ";
+ 			why += widen_ascii(entry_of(i));
 diff --git a/src/upscalers/backend_dlss.cpp b/src/upscalers/backend_dlss.cpp
 index b4f5c9d..c79dc2a 100644
 --- a/src/upscalers/backend_dlss.cpp

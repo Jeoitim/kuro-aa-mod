@@ -6,6 +6,8 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include "PreviewBudget.hpp"
+#include "ShaderCompileCache.hpp"
 
 class PreviewVendor {
     template<class T> static void drop(T *&p){if(p){p->Release();p=nullptr;}}
@@ -19,10 +21,13 @@ class PreviewVendor {
         ID3D11Texture2D *texture=nullptr;
         ID3D11ShaderResourceView *srv=nullptr;
         D3D11_TEXTURE2D_DESC size{};
+        uint64_t serial=0;
         ~Copy(){drop(srv);drop(texture);}
     };
     std::vector<std::unique_ptr<Copy>> copies_;
     Copy *active_=nullptr;
+    uint64_t serial_=0;
+    bool rebuild_=false;
     bool ensure(ID3D11Device *device,const D3D11_TEXTURE2D_DESC &desc){
         if(device_!=device){clear();device_=device;device_->AddRef();}
         if(!blank_){
@@ -35,9 +40,9 @@ class PreviewVendor {
         if(!vs_ || !ps_){
             const char *source="Texture2D<float4> Original:register(t0);float4 VS(uint i:SV_VertexID):SV_Position {return float4(i==2?3:-1,i==1?3:-1,0,1);}float4 PS(float4 p:SV_Position):SV_Target{return Original.Load(int3(int2(p.xy),0));}";
             ID3DBlob *code=nullptr;
-            if(!vs_){if(FAILED(D3DCompile(source,strlen(source),nullptr,nullptr,nullptr,"VS","vs_5_0",0,0,&code,nullptr)))return false;
+            if(!vs_){if(FAILED(kuro_shader_cache::compile(source,strlen(source),nullptr,nullptr,nullptr,"VS","vs_5_0",0,0,&code,nullptr)))return false;
                 const HRESULT hr=device_->CreateVertexShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&vs_);drop(code);if(FAILED(hr))return false;}
-            if(!ps_){if(FAILED(D3DCompile(source,strlen(source),nullptr,nullptr,nullptr,"PS","ps_5_0",0,0,&code,nullptr)))return false;
+            if(!ps_){if(FAILED(kuro_shader_cache::compile(source,strlen(source),nullptr,nullptr,nullptr,"PS","ps_5_0",0,0,&code,nullptr)))return false;
                 const HRESULT hr=device_->CreatePixelShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&ps_);drop(code);if(FAILED(hr))return false;}
         }
         if(!alpha_){D3D11_BLEND_DESC blend{};blend.RenderTarget[0].RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALPHA;
@@ -50,18 +55,27 @@ class PreviewVendor {
             if(copy->size.Width==desc.Width && copy->size.Height==desc.Height && copy->size.Format==desc.Format)active_=copy.get();
         }
         if(!active_){
-            if(copies_.size()>=4 || pixels+uint64_t(desc.Width)*desc.Height>4ull*1920*1080)return true;
+            const auto limits=kuro_budget::read(kuro_shader_cache::module_root());
+            if(!kuro_budget::allows_device(limits,pixels,static_cast<unsigned>(copies_.size()),uint64_t(desc.Width)*desc.Height,device_)){
+                rebuild_=limits.queue && kuro_budget::estimate(uint64_t(desc.Width)*desc.Height,1)<=limits.bytes;return true;
+            }
             auto entry=std::make_unique<Copy>();auto copy=desc;copy.Usage=D3D11_USAGE_DEFAULT;copy.BindFlags=D3D11_BIND_SHADER_RESOURCE;copy.CPUAccessFlags=copy.MiscFlags=0;
             if(FAILED(device_->CreateTexture2D(&copy,nullptr,&entry->texture)) || FAILED(device_->CreateShaderResourceView(entry->texture,nullptr,&entry->srv)))return false;
             entry->size=desc;active_=entry.get();copies_.push_back(std::move(entry));
         }
+        active_->serial=++serial_;
         return true;
     }
 public:
     PreviewVendor()=default;
     PreviewVendor(const PreviewVendor&)=delete;
     ~PreviewVendor(){clear();}
-    void clear(){active_=nullptr;drop(blank_);copies_.clear();drop(vs_);drop(ps_);drop(alpha_);drop(raster_);drop(device_);}
+    void service_queue(){
+        if(!rebuild_)return;rebuild_=false;
+        auto idle=std::min_element(copies_.begin(),copies_.end(),[](const auto &a,const auto &b){return a->serial<b->serial;});
+        if(idle!=copies_.end()){if(active_==idle->get())active_=nullptr;copies_.erase(idle);}
+    }
+    void clear(){active_=nullptr;rebuild_=false;drop(blank_);copies_.clear();drop(vs_);drop(ps_);drop(alpha_);drop(raster_);drop(device_);}
     template<class Run> int run(ID3D11DeviceContext *context,ID3D11Texture2D *texture,Run vendor,std::string &error){
         D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);
         if(context->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE || desc.MipLevels!=1 || desc.ArraySize!=1 || desc.SampleDesc.Count!=1

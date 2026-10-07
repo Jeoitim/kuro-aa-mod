@@ -166,18 +166,19 @@ internal sealed class DarkCheck : CheckBox
 internal sealed class SharpnessSlider : Control
 {
     private int value;
+    internal int Minimum=0,Maximum=100;
     internal event EventHandler ValueChanged;
-    internal int Value {get{return value;}set{int next=Math.Max(0,Math.Min(100,value));if(this.value==next)return;this.value=next;Invalidate();if(ValueChanged!=null)ValueChanged(this,EventArgs.Empty);}}
+    internal int Value {get{return value;}set{int next=Math.Max(Minimum,Math.Min(Maximum,value));if(this.value==next)return;this.value=next;Invalidate();if(ValueChanged!=null)ValueChanged(this,EventArgs.Empty);}}
     internal SharpnessSlider(){SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer|ControlStyles.Selectable,true);Height=34;TabStop=true;Cursor=Cursors.Hand;BackColor=Theme.Background;}
-    private void Position(int x){Value=(int)Math.Round(Math.Max(0,Math.Min(1,(x-8.0)/Math.Max(1,Width-16)))*100);}
+    private void Position(int x){Value=Minimum+(int)Math.Round(Math.Max(0,Math.Min(1,(x-8.0)/Math.Max(1,Width-16)))*(Maximum-Minimum));}
     protected override void OnMouseDown(MouseEventArgs e){base.OnMouseDown(e);if(e.Button==MouseButtons.Left){Focus();Capture=true;Position(e.X);}}
     protected override void OnMouseMove(MouseEventArgs e){base.OnMouseMove(e);if(Capture)Position(e.X);}
     protected override void OnMouseUp(MouseEventArgs e){Capture=false;base.OnMouseUp(e);}
     protected override bool IsInputKey(Keys key){return key==Keys.Left||key==Keys.Right||key==Keys.Home||key==Keys.End||base.IsInputKey(key);}
-    protected override void OnKeyDown(KeyEventArgs e){if(e.KeyCode==Keys.Left)Value--;else if(e.KeyCode==Keys.Right)Value++;else if(e.KeyCode==Keys.Home)Value=0;else if(e.KeyCode==Keys.End)Value=100;base.OnKeyDown(e);}
+    protected override void OnKeyDown(KeyEventArgs e){if(e.KeyCode==Keys.Left)Value--;else if(e.KeyCode==Keys.Right)Value++;else if(e.KeyCode==Keys.Home)Value=Minimum;else if(e.KeyCode==Keys.End)Value=Maximum;base.OnKeyDown(e);}
     protected override void OnGotFocus(EventArgs e){base.OnGotFocus(e);Invalidate();}
     protected override void OnLostFocus(EventArgs e){base.OnLostFocus(e);Invalidate();}
-    protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(BackColor);int y=Height/2,x=8+(Width-16)*Value/100;using(var pen=new Pen(Theme.Border,4))e.Graphics.DrawLine(pen,8,y,Width-8,y);using(var pen=new Pen(Enabled?Theme.Accent:Theme.Muted,4))e.Graphics.DrawLine(pen,8,y,x,y);using(var brush=new SolidBrush(Enabled?Theme.Accent:Theme.Muted))e.Graphics.FillEllipse(brush,x-7,y-7,14,14);if(Focused)using(var pen=new Pen(Theme.Accent))e.Graphics.DrawEllipse(pen,x-8,y-8,16,16);}
+    protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(BackColor);int y=Height/2,x=8+(Width-16)*(Value-Minimum)/Math.Max(1,Maximum-Minimum);using(var pen=new Pen(Theme.Border,4))e.Graphics.DrawLine(pen,8,y,Width-8,y);using(var pen=new Pen(Enabled?Theme.Accent:Theme.Muted,4))e.Graphics.DrawLine(pen,8,y,x,y);using(var brush=new SolidBrush(Enabled?Theme.Accent:Theme.Muted))e.Graphics.FillEllipse(brush,x-7,y-7,14,14);if(Focused)using(var pen=new Pen(Theme.Accent))e.Graphics.DrawEllipse(pen,x-8,y-8,16,16);}
 }
 
 internal sealed class CenteredNumberBox : UserControl
@@ -284,6 +285,11 @@ internal sealed class SettingsWindow : DarkForm
     private readonly ComboBox rule=Theme.Combo("引擎边界","Shader 签名","全屏 AA");
     private readonly CheckBox capture=Theme.Check("采集绘制目标（诊断）");
     private readonly CheckBox preview=Theme.Check("角色界面抗锯齿（实验）");
+    private readonly CenteredNumberBox cacheMB=new CenteredNumberBox{Text="512",BackColor=Theme.Surface,ForeColor=Theme.Text};
+    private readonly ComboBox cacheContexts=Theme.Combo("4","8","12","16");
+    private readonly ComboBox cacheFull=Theme.Combo("跳过 AA","排队重建（可能卡顿）");
+    private readonly SharpnessSlider cacheSlider=new SharpnessSlider{Minimum=1,Maximum=32,Value=4};
+    private readonly CheckBox adaptive=Theme.Check("按可用显存限制"),diskCache=Theme.Check("保存编译缓存"),prewarm=Theme.Check("启动时后台预热");
     private readonly SharpnessSlider sharp=new SharpnessSlider();
     private readonly CenteredNumberBox sharpValue=new CenteredNumberBox{Text="0.00",BackColor=Theme.Surface,ForeColor=Theme.Text};
     private readonly Label status=Theme.LabelOf(""), sceneStatus=Theme.LabelOf("");
@@ -292,7 +298,7 @@ internal sealed class SettingsWindow : DarkForm
     private readonly ToolTip tips=new ToolTip();
     internal SettingsWindow()
     {
-        Text="黎之轨迹抗锯齿 Mod 设置";ClientSize=new Size(640,460);MinimumSize=new Size(656,499);StartPosition=FormStartPosition.CenterScreen;
+        Text="黎之轨迹抗锯齿 Mod 设置";ClientSize=new Size(640,600);MinimumSize=new Size(656,639);StartPosition=FormStartPosition.CenterScreen;
         var root=new TableLayoutPanel {Dock=DockStyle.Fill,Padding=new Padding(26,22,26,20),ColumnCount=1,RowCount=5};
         root.RowStyles.Add(new RowStyle(SizeType.Absolute,55));root.RowStyles.Add(new RowStyle(SizeType.Absolute,48));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,52));root.RowStyles.Add(new RowStyle(SizeType.Absolute,28));Controls.Add(root);
         var header=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2};header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));
@@ -302,24 +308,30 @@ internal sealed class SettingsWindow : DarkForm
         var fields=Grid();aaPage.Controls.Add(fields);
         var sharpRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1};sharpRow.RowStyles.Add(new RowStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));sharp.Dock=DockStyle.Fill;sharp.Margin=Padding.Empty;sharpRow.Controls.Add(sharp,0,0);sharpValue.Dock=DockStyle.Fill;sharpValue.Margin=new Padding(8,0,0,0);sharpRow.Controls.Add(sharpValue,1,0);sharp.ValueChanged+=delegate{sharpValue.Text=(sharp.Value/100.0).ToString("0.00",System.Globalization.CultureInfo.InvariantCulture);};
         sharpValue.Leave+=delegate{decimal number;if(decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)&&number>=0&&number<=1)sharp.Value=(int)Math.Round(number*100);};
-        Row(fields,0,"抗锯齿算法",backend);Row(fields,1,"性能档位",quality);Row(fields,2,"运动估计质量",motionQuality);Row(fields,3,"锐化强度",sharpRow);Row(fields,4,"AA 规则",rule);
-        var sceneFields=Grid();scenePage.Controls.Add(sceneFields);Row(sceneFields,0,"当前规则",sceneStatus);Row(sceneFields,1,"角色界面",preview);Row(sceneFields,2,"诊断采集",capture);Row(sceneFields,3,"游戏适配",Theme.LabelOf("黎之轨迹 I · 云豹 1.1.0"));Row(sceneFields,4,"生效时间",Theme.LabelOf("保存后重新启动游戏"));
+        Row(fields,0,"抗锯齿算法",backend);Row(fields,1,"重建档位",quality);Row(fields,2,"运动估计质量",motionQuality);Row(fields,3,"锐化强度",sharpRow);Row(fields,4,"AA 规则",rule);
+        var sceneFields=Grid(9,38);scenePage.Controls.Add(sceneFields);
+        var budgetRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,RowCount=1,Margin=Padding.Empty};budgetRow.RowStyles.Add(new RowStyle(SizeType.Percent,100));budgetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));budgetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,70));budgetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,160));cacheSlider.Dock=cacheMB.Dock=DockStyle.Fill;cacheSlider.Margin=Padding.Empty;cacheMB.Margin=new Padding(6,2,6,2);adaptive.Margin=new Padding(3,7,0,0);budgetRow.Controls.Add(cacheSlider,0,0);budgetRow.Controls.Add(cacheMB,1,0);budgetRow.Controls.Add(adaptive,2,0);cacheSlider.ValueChanged+=delegate{cacheMB.Text=(cacheSlider.Value*128).ToString();};cacheMB.Leave+=delegate{int number;if(int.TryParse(cacheMB.Text,out number)&&number>=128&&number<=4096)cacheSlider.Value=(int)Math.Round(number/128.0);};
+        var warmRow=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};warmRow.Controls.Add(diskCache);warmRow.Controls.Add(prewarm);
+        Row(sceneFields,0,"当前规则",sceneStatus);Row(sceneFields,1,"角色界面",preview);Row(sceneFields,2,"缓存预算 (MB)",budgetRow);Row(sceneFields,3,"缓存数量上限",cacheContexts);Row(sceneFields,4,"缓存满后",cacheFull);Row(sceneFields,5,"加载优化",warmRow);Row(sceneFields,6,"诊断采集",capture);Row(sceneFields,7,"游戏适配",Theme.LabelOf("黎之轨迹 I · 云豹 1.1.0"));Row(sceneFields,8,"生效时间",Theme.LabelOf("保存后重新启动游戏"));
         var actions=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false,Padding=new Padding(0,6,0,0)};
         var save=Theme.ButtonOf("保存设置",true);var launch=Theme.ButtonOf("启动游戏");var logs=Theme.ButtonOf("查看日志");actions.Controls.AddRange(new Control[]{save,launch,toggle,logs});root.Controls.Add(actions,0,3);root.Controls.Add(status,0,4);
         aaTab.Click+=delegate{ShowTab(false);};uiTab.Click+=delegate{ShowTab(true);};backend.SelectedIndexChanged+=delegate{RefreshControls();};rule.SelectedIndexChanged+=delegate{RefreshControls();};
-        save.Click+=delegate{Run(delegate{Config.RequireStopped();decimal number;if(!decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)||number<0||number>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00，默认 0；需要时推荐 0.03 到 0.08。");sharp.Value=(int)Math.Round(number*100);Config.SetRule(rule.SelectedIndex,capture.Checked);Config.Set(Config.PathOf("KuroUI.ini"),"KuroUI",new Dictionary<string,string>{{"PreviewVendorAA",preview.Checked?"1":"0"}});Config.SelectBackend(backend.SelectedIndex,qualityIds[Math.Max(0,quality.SelectedIndex)],sharp.Value/100.0f,motionQuality.SelectedIndex);status.Text="设置已保存，下次启动游戏时生效。";status.ForeColor=Theme.Accent;});};
+        diskCache.CheckedChanged+=delegate{prewarm.Enabled=diskCache.Checked;};
+        save.Click+=delegate{Run(delegate{Config.RequireStopped();decimal number;int budget;if(!int.TryParse(cacheMB.Text,out budget)||budget<128||budget>4096)throw new ArgumentException("缓存预算可填写 128–4096 MB，默认 512；可按需要提高，但会增加显存占用。");if(!decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)||number<0||number>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00，默认 0；需要时推荐 0.03 到 0.08。");sharp.Value=(int)Math.Round(number*100);Config.SetRule(rule.SelectedIndex,capture.Checked);Config.Set(Config.PathOf("KuroUI.ini"),"KuroUI",new Dictionary<string,string>{{"PreviewVendorAA",preview.Checked?"1":"0"},{"PreviewCacheMB",budget.ToString()},{"PreviewCacheContexts",cacheContexts.SelectedItem.ToString()},{"PreviewCacheAdaptive",adaptive.Checked?"1":"0"},{"PreviewCacheFullPolicy",cacheFull.SelectedIndex==1?"1":"0"},{"ShaderDiskCache",diskCache.Checked?"1":"0"},{"StartupPrewarm",prewarm.Checked?"1":"0"}});Config.SelectBackend(backend.SelectedIndex,qualityIds[Math.Max(0,quality.SelectedIndex)],sharp.Value/100.0f,motionQuality.SelectedIndex);status.Text="设置已保存，下次启动游戏时生效。";status.ForeColor=Theme.Accent;});};
         toggle.Click+=delegate{Run(delegate{Config.ToggleInjection(!File.Exists(Config.PathOf("dxgi.dll")));RefreshStatus();});};
         launch.Click+=delegate{Run(delegate{if(!File.Exists(Config.PathOf("ed9.exe")))throw new FileNotFoundException("未找到 ed9.exe，请把设置器放在游戏目录中。");Process.Start(new ProcessStartInfo(Config.PathOf("ed9.exe")){WorkingDirectory=Config.Root,UseShellExecute=true});});};
         logs.Click+=delegate{Run(delegate{string path=Config.PathOf("KuroUI.log");if(!File.Exists(path))path=Config.PathOf("AeonSR.log");if(!File.Exists(path))throw new FileNotFoundException("还没有运行日志，请先启动一次游戏。");Process.Start(path);});};
         tips.SetToolTip(capture,"仅用于诊断，GPU 回读会造成卡顿。");tips.SetToolTip(toggle,"只切换本抗锯齿 Mod 的注入文件。");
         tips.SetToolTip(sharpValue,"可填写 0.00–1.00；默认 0；需要时推荐 0.03–0.08。");
         tips.SetToolTip(rule,"无规则会处理最终画面，UI 文字也参与 AA，可能变软或残影。");
+        tips.SetToolTip(cacheMB,"估算预算：128–4096 MB，默认 512。较高分辨率或模型尺寸较多时可调高，不是严格的显存字节上限。");tips.SetToolTip(adaptive,"新建缓存时保留显存余量；显存不足会跳过额外模型 AA，不在对话中淘汰缓存。");tips.SetToolTip(prewarm,"后台预编译光流着色器，不恢复上次运行的画面历史。");tips.SetToolTip(quality,"这些档位只改变重建过程，不降低游戏本体的渲染分辨率。");
+        tips.SetToolTip(cacheFull,"默认跳过额外模型。排队重建在帧结束回收闲置缓存，下次准备资源，仍可能卡顿；不绕过显存保护。");
         LoadSettings();ShowTab(false);RefreshControls();RefreshStatus();
     }
-    private static TableLayoutPanel Grid()
+    private static TableLayoutPanel Grid(int rows=6,int height=40)
     {
-        var grid=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=6,Padding=new Padding(0,18,0,0)};grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,145));grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        for(int i=0;i<6;i++)grid.RowStyles.Add(new RowStyle(SizeType.Absolute,40));return grid;
+        var grid=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=rows,Padding=new Padding(0,18,0,0)};grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,145));grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        for(int i=0;i<rows;i++)grid.RowStyles.Add(new RowStyle(SizeType.Absolute,height));return grid;
     }
     private static void Row(TableLayoutPanel grid,int row,string name,Control control) {var label=Theme.LabelOf(name);label.ForeColor=Theme.Muted;grid.Controls.Add(label,0,row);grid.Controls.Add(control,1,row);}
     private void LoadSettings()
@@ -329,6 +341,7 @@ internal sealed class SettingsWindow : DarkForm
         backend.SelectedIndex=!Config.Flag(a,"Enabled",true)||b==3?3:b>=0&&b<3?b:4;int qualityIndex=Array.IndexOf(qualityIds,q);quality.SelectedIndex=qualityIndex>=0?qualityIndex:q==1&&qualityIds.Length>1?1:0;motionQuality.SelectedIndex=Math.Max(0,Math.Min(flow,1));
         capture.Checked=Config.Flag(s,"CaptureCandidates",false);
         preview.Checked=Config.Flag(s,"PreviewVendorAA",false);
+        int budget=512,contexts=4;if(s.ContainsKey("PreviewCacheMB"))int.TryParse(s["PreviewCacheMB"],out budget);if(s.ContainsKey("PreviewCacheContexts"))int.TryParse(s["PreviewCacheContexts"],out contexts);cacheSlider.Value=(int)Math.Round(Math.Max(128,Math.Min(4096,budget))/128.0);cacheMB.Text=(cacheSlider.Value*128).ToString();cacheContexts.SelectedIndex=Math.Max(0,Math.Min(3,(contexts+3)/4-1));cacheFull.SelectedIndex=Config.Flag(s,"PreviewCacheFullPolicy",false)?1:0;adaptive.Checked=Config.Flag(s,"PreviewCacheAdaptive",true);diskCache.Checked=Config.Flag(s,"ShaderDiskCache",true);prewarm.Checked=Config.Flag(s,"StartupPrewarm",true);
         rule.SelectedIndex=Config.ReadRule(s);
         decimal value=0m;if(a.ContainsKey("Sharpness"))decimal.TryParse(a["Sharpness"],System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out value);sharp.Value=(int)(Math.Max(0,Math.Min(1.00m,value))*100);
     }
@@ -361,8 +374,12 @@ internal sealed class SettingsWindow : DarkForm
     internal void SelectSharpness(){ShowTab(false);sharp.Value=10;sharp.Focus();}
     internal void VerifyControls()
     {
+        if(cacheFull.Items.Count!=2 || cacheContexts.Items.Count!=4)throw new Exception("缓存选项测试失败。");
+        cacheSlider.Value=1;if(cacheMB.Text!="128")throw new Exception("缓存预算下限测试失败。");
+        cacheSlider.Value=32;if(cacheMB.Text!="4096")throw new Exception("缓存预算上限测试失败。");
         ((DarkCombo)backend).VerifyPopupBackground();((DarkCombo)quality).VerifyPopupBackground();((DarkCombo)motionQuality).VerifyPopupBackground();((DarkCombo)rule).VerifyPopupBackground();
         sharpValue.VerifyBorder();
+        cacheMB.VerifyBorder();
         for(int b=0;b<3;b++){
             backend.SelectedIndex=b;
             string native=b==0?"DLAA":"Native AA";
