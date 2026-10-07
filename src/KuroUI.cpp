@@ -26,7 +26,7 @@ std::atomic<bool> tracking{false};
 thread_local bool inside_early=false;
 struct Command { uint64_t ps=0,vs=0; resource_view target{}; resource_view depth{}; bool depth_test=true; };
 struct Pipeline { uint64_t hash=0; bool depth_test=true; };
-struct DrawStat { uint64_t shader=0,vertex_shader=0; unsigned width=0,height=0,format=0; bool depth=false; unsigned draws=0,vertices=0,first=0,last=0; };
+struct DrawStat { uint64_t shader=0,vertex_shader=0,target=0; unsigned width=0,height=0,format=0; bool depth=false; unsigned draws=0,vertices=0,first=0,last=0; std::string callers; };
 struct State {
     effect_runtime *runtime=nullptr;
     bool in_present=false,early=false,trace=false;
@@ -36,17 +36,26 @@ struct State {
     bool allow_offscreen=false;
     bool skip_unmatched=true;
     bool capture_candidates=false;
+    bool trace_callers=false;
+    bool early_requested=false;
+    bool engine_requested=false,ui_started=false;
+    uint64_t ui_blocked_frames=0;
+    ID3D11RenderTargetView *scene_target=nullptr;
+    command_list *scene_command=nullptr;
+    uint32_t engine_ui=0,scene_width=0,scene_height=0;
+    uint64_t engine_count=0;
     ID3D11Texture2D *pending_capture=nullptr;
     command_list *pending_command=nullptr;
     std::string pending_name;
     std::unordered_set<std::string> captured_keys;
     std::unordered_map<std::string,DrawStat> draws;
-    ~State() { release(pending_capture); }
+    ~State() { release(pending_capture);release(scene_target); }
 };
 std::unordered_map<effect_runtime*,std::unique_ptr<State>> states;
 std::unordered_map<command_list*,Command> commands;
 std::unordered_map<uint64_t,Pipeline> pipelines;
 void finish_capture(command_list *cmd);
+uint64_t shader_hash(const void *code,size_t size);
 
 void note(const std::string &text)
 {
@@ -58,6 +67,7 @@ void load_profile(State &s)
 {
     wchar_t hash[64]{};
     const auto ini=(root / "KuroUI.ini").wstring();
+    s.early_requested=GetPrivateProfileIntW(L"KuroUI",L"EnableEarlyAA",0,ini.c_str()) != 0;
     GetPrivateProfileStringW(L"KuroUI",L"EarlyUIShaderHash",L"0",hash,64,ini.c_str());
     s.early_hash=GetPrivateProfileIntW(L"KuroUI",L"EnableEarlyAA",0,ini.c_str()) ? std::wcstoull(hash,nullptr,16) : 0;
     GetPrivateProfileStringW(L"KuroUI",L"EarlyUIVertexShaderHash",L"0",hash,64,ini.c_str()); s.early_vs=std::wcstoull(hash,nullptr,16);
@@ -65,12 +75,34 @@ void load_profile(State &s)
     s.skip_unmatched=GetPrivateProfileIntW(L"KuroUI",L"SkipUnmatchedFrames",1,ini.c_str()) != 0;
     s.capture_candidates=GetPrivateProfileIntW(L"KuroUI",L"CaptureCandidates",0,ini.c_str()) != 0;
     s.trace=GetPrivateProfileIntW(L"KuroUI",L"TraceDraws",0,ini.c_str()) != 0;
+    s.trace_callers=GetPrivateProfileIntW(L"KuroUI",L"TraceEngineCallers",0,ini.c_str()) != 0;
+    s.engine_ui=0;
+    s.engine_requested=false;
+    if(GetPrivateProfileIntW(L"KuroUI",L"EnableEarlyAA",0,ini.c_str())){
+        GetPrivateProfileStringW(L"KuroUI",L"EngineUIFunctionRVA",L"0",hash,64,ini.c_str());
+        const uint64_t rva=std::wcstoull(hash,nullptr,16);
+        s.engine_requested=rva!=0;
+        GetPrivateProfileStringW(L"KuroUI",L"EngineUIFunctionHash",L"0",hash,64,ini.c_str());
+        const uint64_t expected=std::wcstoull(hash,nullptr,16);
+        const uintptr_t base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        const auto *dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        const auto *nt=reinterpret_cast<const IMAGE_NT_HEADERS*>(base+dos->e_lfanew);
+        MEMORY_BASIC_INFORMATION memory{};
+        if(rva && expected && rva<=UINT32_MAX && rva<nt->OptionalHeader.SizeOfImage && nt->OptionalHeader.SizeOfImage-rva>=32
+            && nt->FileHeader.TimeDateStamp==GetPrivateProfileIntW(L"KuroUI",L"EngineImageTimestamp",0,ini.c_str())
+            && nt->OptionalHeader.SizeOfImage==GetPrivateProfileIntW(L"KuroUI",L"EngineImageSize",0,ini.c_str())
+            && VirtualQuery(reinterpret_cast<const void*>(base+rva),&memory,sizeof(memory))
+            && memory.State==MEM_COMMIT && !(memory.Protect&(PAGE_GUARD|PAGE_NOACCESS))
+            && base+rva+32<=reinterpret_cast<uintptr_t>(memory.BaseAddress)+memory.RegionSize
+            && shader_hash(reinterpret_cast<const void*>(base+rva),32)==expected)
+            s.engine_ui=static_cast<uint32_t>(rva);
+    }
 }
 void refresh(State &s)
 {
     if(s.frame % 60 == 0) load_profile(s);
     bool active=false;
-    for(const auto &entry:states) active |= entry.second->trace || entry.second->early_hash != 0;
+    for(const auto &entry:states) active |= entry.second->trace || entry.second->early_hash != 0 || entry.second->engine_ui != 0;
     tracking.store(active,std::memory_order_relaxed);
 }
 void on_init(effect_runtime *runtime)
@@ -79,6 +111,7 @@ void on_init(effect_runtime *runtime)
     auto state=std::make_unique<State>(); state->runtime=runtime; load_profile(*state);
     states[runtime]=std::move(state);
     note("Kuro AA: DX11 scene integration initialized.");
+    note("Kuro AA: validated engine UI boundary="+std::to_string(states[runtime]->engine_ui));
 }
 void on_destroy(effect_runtime *runtime)
 {
@@ -96,7 +129,7 @@ void on_present(command_queue *queue,swapchain *chain,const rect*,const rect*,ui
         refresh(s); s.in_present=true;
         if(s.frame==0) note("Kuro UI: settings read.");
         if(s.early) continue;
-        if(s.early_hash && s.skip_unmatched) {
+        if(s.skip_unmatched) {
             // Preserve UI on unknown layouts instead of reverting to full-frame AA.
             inside_early=true;
             s.runtime->render_effects(queue->get_immediate_command_list(),{},{});
@@ -108,10 +141,10 @@ void on_present(command_queue *queue,swapchain *chain,const rect*,const rect*,ui
 void dump(State &s)
 {
     std::ofstream file(root / "KuroUI-draws.csv",std::ios::trunc);
-    file << "pixel_shader_hash,vertex_shader_hash,target_width,target_height,target_format,depth_bound,draws,vertices,first_draw,last_draw\n";
+    file << "pixel_shader_hash,vertex_shader_hash,target_width,target_height,target_format,depth_bound,draws,vertices,first_draw,last_draw,engine_callers,target_id\n";
     for(const auto &entry:s.draws) {
         const auto &d=entry.second;
-        file << std::hex << d.shader << ',' << d.vertex_shader << std::dec << ',' << d.width << ',' << d.height << ',' << d.format << ',' << d.depth << ',' << d.draws << ',' << d.vertices << ',' << d.first << ',' << d.last << '\n';
+        file << std::hex << d.shader << ',' << d.vertex_shader << std::dec << ',' << d.width << ',' << d.height << ',' << d.format << ',' << d.depth << ',' << d.draws << ',' << d.vertices << ',' << d.first << ',' << d.last << ',' << d.callers << ',' << std::hex << d.target << std::dec << '\n';
     }
     s.draws.clear();
     s.captured_keys.clear();
@@ -121,10 +154,12 @@ void on_end(effect_runtime *runtime)
     auto it=states.find(runtime); if(it==states.end()) return;
     State &s=*it->second;
     if(s.frame % 300 == 0) {
-        note("Kuro AA: early frames="+std::to_string(s.early_count)+", unmatched skipped="+std::to_string(s.skipped_count));
+        note("Kuro AA: early frames="+std::to_string(s.early_count)+", engine frames="+std::to_string(s.engine_count)+", unmatched skipped="+std::to_string(s.skipped_count)+", UI-before-scene bypass="+std::to_string(s.ui_blocked_frames));
         if(s.trace) dump(s);
     }
     s.in_present=false; s.early=false; s.draw_index=0; ++s.frame;
+    s.scene_width=s.scene_height=0;
+    s.ui_started=false;release(s.scene_target);s.scene_command=nullptr;
 }
 uint64_t shader_hash(const void *code,size_t size)
 {
@@ -205,6 +240,32 @@ void on_targets(command_list *cmd,uint32_t count,const resource_view *targets,re
     std::lock_guard<std::mutex> guard(lock);
     commands[cmd].target=count?targets[0]:resource_view{}; commands[cmd].depth=depth;
 }
+std::vector<uintptr_t> engine_frames()
+{
+    const uintptr_t base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto *dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto *nt=reinterpret_cast<const IMAGE_NT_HEADERS*>(base+dos->e_lfanew);
+    const uintptr_t end=base+nt->OptionalHeader.SizeOfImage;
+    void *frames[32]{};
+    const USHORT count=CaptureStackBackTrace(0,32,frames,nullptr);
+    std::vector<uintptr_t> result;uintptr_t previous=0;
+    for(USHORT i=0;i<count && result.size()<12;++i){
+        const uintptr_t address=reinterpret_cast<uintptr_t>(frames[i]);
+        if(address<base || address>=end)continue;
+        DWORD64 image=0;
+        auto *function=RtlLookupFunctionEntry(address,&image,nullptr);
+        const uintptr_t rva=function && image==base ? function->BeginAddress : address-base;
+        if(rva==previous)continue;
+        result.push_back(rva);previous=rva;
+    }
+    return result;
+}
+std::string engine_callers()
+{
+    std::ostringstream result;bool first=true;
+    for(const auto rva:engine_frames()){if(!first)result << '|';result << std::hex << rva;first=false;}
+    return result.str();
+}
 bool draw(command_list *cmd,uint32_t vertices)
 {
     if(!tracking.load(std::memory_order_relaxed) || inside_early || cmd->get_device()->get_api()!=device_api::d3d11) return false;
@@ -217,7 +278,7 @@ bool draw(command_list *cmd,uint32_t vertices)
     for(const auto &entry:states) {
         const State &s=*entry.second;
         interested |= s.runtime->get_device()==cmd->get_device() && !s.in_present
-            && (s.trace || (!s.early && s.early_hash==c.ps && !depth_active));
+            && (s.trace || (s.engine_ui && !s.early && !s.ui_started) || (!s.engine_requested && !s.early && s.early_hash==c.ps && !depth_active));
     }
     if(!interested) return false;
     auto resource=cmd->get_device()->get_resource_from_view(c.target);
@@ -225,10 +286,24 @@ bool draw(command_list *cmd,uint32_t vertices)
     for(auto &entry:states) {
         State &s=*entry.second;
         if(s.runtime->get_device()!=cmd->get_device() || s.in_present) continue;
-        if(s.trace) {
+        if(s.ui_started && !s.trace)continue;
+        // The engine route tracks the largest SDR/HDR geometry color target, never shadow maps.
+        const unsigned target_format=static_cast<unsigned>(desc.texture.format);
+        if(s.engine_ui && !s.ui_started && depth_active && desc.type==resource_type::texture_2d && desc.texture.depth_or_layers==1
+            && desc.texture.samples==1 && desc.texture.width>=512 && desc.texture.height>=288
+            && (target_format==10 || target_format==28 || target_format==87)
+            && uint64_t(desc.texture.width)*desc.texture.height>uint64_t(s.scene_width)*s.scene_height){
+            s.scene_width=desc.texture.width;s.scene_height=desc.texture.height;
+            release(s.scene_target);s.scene_command=nullptr;
+        }
+        if(s.trace && (!s.trace_callers || s.frame%120==60)) {
+            // Sample one frame per two seconds at 60 Hz. No GPU readback is needed.
+            const std::string callers=s.trace_callers && s.frame%120==60 ? engine_callers() : "";
             ++s.draw_index;
-            std::string key=std::to_string(c.ps)+":"+std::to_string(c.vs)+":"+std::to_string(desc.texture.width)+":"+std::to_string(desc.texture.height)+":"+std::to_string(c.depth.handle!=0);
+            std::string key=std::to_string(c.ps)+":"+std::to_string(c.vs)+":"+std::to_string(resource.handle)+":"+std::to_string(c.depth.handle!=0)+":"+callers;
             auto &d=s.draws[key]; d.shader=c.ps; d.vertex_shader=c.vs; d.width=desc.texture.width; d.height=desc.texture.height; d.format=static_cast<unsigned>(desc.texture.format); d.depth=depth_active;
+            d.callers=callers;
+            d.target=resource.handle;
             if(!d.draws) d.first=s.draw_index;
             ++d.draws; d.vertices+=vertices; d.last=s.draw_index;
             unsigned format=static_cast<unsigned>(desc.texture.format);
@@ -242,22 +317,54 @@ bool draw(command_list *cmd,uint32_t vertices)
                 }
             }
         }
-        if(s.early || !s.early_hash || c.ps!=s.early_hash || depth_active) continue;
-        if(s.early_vs && c.vs!=s.early_vs) continue;
+        if(s.early || s.ui_started) continue;
+        const auto back=s.runtime->get_current_back_buffer();const auto backDesc=cmd->get_device()->get_resource_desc(back);
+        const bool scene_compatible=desc.texture.width==s.scene_width && desc.texture.height==s.scene_height
+            && desc.texture.samples==1 && desc.texture.format==backDesc.texture.format;
+        bool engine_match=false;
+        if(s.engine_requested){
+            if(!s.engine_ui)continue;
+            if(!depth_active){const auto frames=engine_frames();engine_match=std::find(frames.begin(),frames.end(),s.engine_ui)!=frames.end();}
+            if(!engine_match){
+                if(scene_compatible){
+                    auto *target=reinterpret_cast<ID3D11RenderTargetView*>(c.target.handle);
+                    if(s.scene_target!=target){release(s.scene_target);s.scene_target=target;target->AddRef();}
+                    s.scene_command=cmd;
+                }
+                continue;
+            }
+            // The first UI submission closes the AA window for the entire frame, including auxiliary UI targets.
+            s.ui_started=true;
+            if(!s.scene_width || !s.scene_height){++s.ui_blocked_frames;continue;}
+        }
+        if(depth_active)continue;
         uint32_t width=0,height=0; s.runtime->get_screenshot_width_and_height(&width,&height);
-        auto back=s.runtime->get_current_back_buffer(); auto backDesc=cmd->get_device()->get_resource_desc(back);
-        if(desc.texture.width!=width || desc.texture.height!=height || desc.texture.samples!=1 || desc.texture.format!=backDesc.texture.format) continue;
-        if(!s.allow_offscreen && resource.handle!=back.handle) continue;
-        // Exact opt-in shader signature only. ReShade backs up and restores the draw state.
+        resource_view processing_target=c.target;
+        if(s.engine_ui){
+            if(!scene_compatible){
+                if(!s.scene_target || s.scene_command!=cmd){++s.ui_blocked_frames;continue;}
+                processing_target=resource_view{reinterpret_cast<uintptr_t>(s.scene_target)};
+            }
+        }else{
+            if(!s.early_hash || c.ps!=s.early_hash || (s.early_vs && c.vs!=s.early_vs))continue;
+            if(desc.texture.width!=width || desc.texture.height!=height)continue;
+            if(desc.texture.samples!=1 || desc.texture.format!=backDesc.texture.format)continue;
+        }
+        if(!s.allow_offscreen && cmd->get_device()->get_resource_from_view(processing_target).handle!=back.handle)continue;
+        // ReShade preserves the game state; this runs before the actual UI draw.
         s.early=true; ++s.early_count; inside_early=true;
-        s.runtime->render_effects(cmd,c.target,{});
+        if(engine_match)++s.engine_count;
+        s.runtime->render_effects(cmd,processing_target,{});
         inside_early=false;
     }
     return false;
 }
 bool on_draw(command_list *cmd,uint32_t count,uint32_t instances,uint32_t,uint32_t) { return draw(cmd,count*instances); }
 bool on_indexed(command_list *cmd,uint32_t count,uint32_t instances,uint32_t,int32_t,uint32_t) { return draw(cmd,count*instances); }
-void on_cmd_destroy(command_list *cmd) { std::lock_guard<std::mutex> guard(lock); commands.erase(cmd); }
+void on_cmd_destroy(command_list *cmd) {
+    std::lock_guard<std::mutex> guard(lock);commands.erase(cmd);
+    for(auto &entry:states)if(entry.second->scene_command==cmd){release(entry.second->scene_target);entry.second->scene_command=nullptr;}
+}
 }
 extern "C" {
 __declspec(dllexport) const char *NAME="Kuro AA scene integration";

@@ -46,16 +46,29 @@ float4 PSHUD(V input) : SV_Target {
 )";
 template<class T> void Release(T *&p) { if (p) { p->Release(); p=nullptr; } }
 static void Check(HRESULT result,const char *what) { if (FAILED(result)) throw std::runtime_error(what); }
+__declspec(noinline) static void SubmitUI(ID3D11DeviceContext *context,ID3D11RenderTargetView *target,
+    ID3D11DepthStencilState *depth,ID3D11VertexShader *vs,ID3D11PixelShader *ps,ID3D11Buffer *cb)
+{
+    context->OMSetDepthStencilState(depth,0);context->OMSetRenderTargets(1,&target,nullptr);
+    context->VSSetShader(vs,nullptr,0);context->PSSetShader(ps,nullptr,0);
+    context->PSSetConstantBuffers(0,1,&cb);context->Draw(3,0);
+    volatile int completed=1;(void)completed;
+}
 int main(int argc,char **argv)
 {
     const int frames = argc > 1 ? std::atoi(argv[1]) : 600;
-    const bool offscreen=argc > 2 && std::strcmp(argv[2],"offscreen")==0;
+    const bool uiFirst=argc > 2 && std::strcmp(argv[2],"ui-first")==0;
+    const bool uiOnly=argc > 2 && std::strcmp(argv[2],"ui-only")==0;
+    const bool uiAux=argc > 2 && std::strcmp(argv[2],"ui-aux")==0;
+    const bool uiFirstAux=argc > 2 && std::strcmp(argv[2],"ui-first-aux")==0;
+    const bool letterbox=uiFirst || uiOnly || uiAux || uiFirstAux || (argc > 2 && std::strcmp(argv[2],"letterbox")==0);
+    const bool offscreen=letterbox || (argc > 2 && std::strcmp(argv[2],"offscreen")==0);
     try {
         WNDCLASSW wc{}; wc.lpfnWndProc=DefWindowProcW; wc.hInstance=GetModuleHandleW(nullptr); wc.lpszClassName=L"KuroSmoke";
         RegisterClassW(&wc);
         HWND window=CreateWindowW(wc.lpszClassName,L"Kuro GPU smoke test",WS_OVERLAPPEDWINDOW,0,0,660,400,nullptr,nullptr,wc.hInstance,nullptr);
         ShowWindow(window,SW_SHOWMINNOACTIVE);
-        DXGI_SWAP_CHAIN_DESC desc{}; desc.BufferDesc.Width=640; desc.BufferDesc.Height=360;
+        DXGI_SWAP_CHAIN_DESC desc{}; desc.BufferDesc.Width=letterbox?800:640; desc.BufferDesc.Height=360;
         desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM; desc.SampleDesc.Count=1;
         desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount=1; desc.OutputWindow=window;
         desc.Windowed=TRUE; desc.SwapEffect=DXGI_SWAP_EFFECT_DISCARD;
@@ -65,8 +78,13 @@ int main(int argc,char **argv)
         ID3D11RenderTargetView *target=nullptr; Check(device->CreateRenderTargetView(back,nullptr,&target),"RTV");
         ID3D11Texture2D *scene=nullptr; ID3D11RenderTargetView *sceneTarget=nullptr; ID3D11ShaderResourceView *sceneView=nullptr;
         ID3D11SamplerState *sceneSampler=nullptr;
+        ID3D11Texture2D *auxiliary=nullptr;ID3D11RenderTargetView *auxiliaryTarget=nullptr;
+        if(uiAux || uiFirstAux){
+            D3D11_TEXTURE2D_DESC d{};back->GetDesc(&d);d.Width=d.Height=256;d.BindFlags=D3D11_BIND_RENDER_TARGET;
+            Check(device->CreateTexture2D(&d,nullptr,&auxiliary),"auxiliary UI texture");Check(device->CreateRenderTargetView(auxiliary,nullptr,&auxiliaryTarget),"auxiliary UI RTV");
+        }
         if(offscreen) {
-            D3D11_TEXTURE2D_DESC d{}; back->GetDesc(&d); d.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+            D3D11_TEXTURE2D_DESC d{}; back->GetDesc(&d);d.Width=640; d.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
             Check(device->CreateTexture2D(&d,nullptr,&scene),"scene texture"); Check(device->CreateRenderTargetView(scene,nullptr,&sceneTarget),"scene RTV"); Check(device->CreateShaderResourceView(scene,nullptr,&sceneView),"scene SRV");
             D3D11_SAMPLER_DESC sampler{}; sampler.Filter=D3D11_FILTER_MIN_MAG_MIP_POINT; sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP; sampler.MaxLOD=D3D11_FLOAT32_MAX;
             Check(device->CreateSamplerState(&sampler,&sceneSampler),"scene sampler");
@@ -84,6 +102,14 @@ int main(int argc,char **argv)
         uint64_t hudHash=14695981039346656037ull;
         for(size_t i=0;i<hudPSCode->GetBufferSize();++i) { hudHash^=static_cast<const unsigned char*>(hudPSCode->GetBufferPointer())[i]; hudHash*=1099511628211ull; }
         std::cout << "HUD pixel shader hash=" << std::hex << hudHash << std::dec << "\n";
+        const uintptr_t image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        const auto *dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+        const auto *headers=reinterpret_cast<const IMAGE_NT_HEADERS*>(image+dos->e_lfanew);
+        uint64_t functionHash=14695981039346656037ull;
+        const auto *function=reinterpret_cast<const unsigned char*>(&SubmitUI);
+        for(unsigned i=0;i<32;++i){functionHash^=function[i];functionHash*=1099511628211ull;}
+        std::cout << "Engine UI RVA=" << std::hex << reinterpret_cast<uintptr_t>(function)-image << "\nEngine UI hash=" << functionHash << std::dec
+            << "\nEngine timestamp=" << headers->FileHeader.TimeDateStamp << "\nEngine image size=" << headers->OptionalHeader.SizeOfImage << "\n";
         ID3D11VertexShader *vs=nullptr,*hudVS=nullptr; ID3D11PixelShader *ps=nullptr,*hudPS=nullptr,*copyPS=nullptr;
         Check(device->CreateVertexShader(vsCode->GetBufferPointer(),vsCode->GetBufferSize(),nullptr,&vs),"VS");
         Check(device->CreatePixelShader(psCode->GetBufferPointer(),psCode->GetBufferSize(),nullptr,&ps),"PS");
@@ -103,11 +129,13 @@ int main(int argc,char **argv)
             const float background[4]={0.09f,0.13f,0.18f,1};
             ID3D11RenderTargetView *renderTarget=offscreen?sceneTarget:target;
             context->OMSetRenderTargets(1,&renderTarget,dsv); context->ClearRenderTargetView(renderTarget,background); context->ClearDepthStencilView(dsv,D3D11_CLEAR_DEPTH,1,0);
+            if(uiFirst)SubmitUI(context,renderTarget,hudDepthState,hudVS,hudPS,cb);
+            if(uiFirstAux)SubmitUI(context,auxiliaryTarget,hudDepthState,hudVS,hudPS,cb);
+            context->OMSetDepthStencilState(nullptr,0);context->OMSetRenderTargets(1,&renderTarget,dsv);
             context->RSSetState(rs); context->RSSetViewports(1,&viewport); context->VSSetShader(vs,nullptr,0); context->PSSetShader(ps,nullptr,0);
-            context->VSSetConstantBuffers(0,1,&cb); context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST); context->Draw(3,0);
-            context->OMSetDepthStencilState(hudDepthState,0); context->OMSetRenderTargets(1,&renderTarget,nullptr);
-            context->VSSetShader(hudVS,nullptr,0); context->PSSetShader(hudPS,nullptr,0);
-            context->PSSetConstantBuffers(0,1,&cb); context->Draw(3,0);
+            context->VSSetConstantBuffers(0,1,&cb); context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST); if(!uiOnly)context->Draw(3,0);
+            if(uiAux)SubmitUI(context,auxiliaryTarget,hudDepthState,hudVS,hudPS,cb);
+            SubmitUI(context,renderTarget,hudDepthState,hudVS,hudPS,cb);
             if(offscreen) {
                 context->OMSetRenderTargets(1,&target,nullptr); context->PSSetShader(copyPS,nullptr,0);
                 context->PSSetShaderResources(0,1,&sceneView); context->PSSetSamplers(0,1,&sceneSampler); context->Draw(3,0);
@@ -130,6 +158,7 @@ int main(int argc,char **argv)
         std::ofstream bmp("smoke.bmp",std::ios::binary); bmp.write(reinterpret_cast<char*>(&file),sizeof(file)); bmp.write(reinterpret_cast<char*>(&info),sizeof(info)); bmp.write(reinterpret_cast<char*>(pixels.data()),pixels.size());
         std::cout << "Rendered " << frames << " frames, mean RGB=" << sum/(640*360*3) << "\n";
         if (sum/(640*360*3)<10) throw std::runtime_error("Blank GPU output");
+        Release(auxiliaryTarget);Release(auxiliary);
         context->ClearState(); context->Flush(); Release(stage); Release(cb); Release(rs); Release(vs); Release(ps); Release(hudVS); Release(hudPS); Release(copyPS); Release(copyCode); Release(scene); Release(sceneTarget); Release(sceneView); Release(sceneSampler); Release(hudVSCode); Release(hudPSCode); Release(hudDepthState); Release(vsCode); Release(psCode); Release(dsv); Release(depth); Release(target); Release(back); Release(swap); Release(context); Release(device); DestroyWindow(window);
         return 0;
     } catch(const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }

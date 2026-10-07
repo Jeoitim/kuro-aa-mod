@@ -13,7 +13,7 @@ foreach($backend in @('dlss','fsr','xess')) {
     $handle=$manager.Handle; $manager.WaitForExit()
     if($manager.ExitCode -ne 0) { throw "Backend configuration failed: $backend" }
     # This fixture tests runtimes, not the CLE game's shader signature.
-    [IO.File]::WriteAllText((Join-Path $testRoot 'KuroAA\KuroUI.ini'),"[KuroUI]`nEnableEarlyAA=0`nCaptureCandidates=0`n")
+    [IO.File]::WriteAllText((Join-Path $testRoot 'KuroAA\KuroUI.ini'),"[KuroUI]`nEnableEarlyAA=0`nSkipUnmatchedFrames=0`nCaptureCandidates=0`n")
     $process=Start-Process -FilePath (Join-Path $testRoot 'smoke_d3d11.exe') -ArgumentList '1200' -WorkingDirectory $testRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $testRoot 'stdout.log') -RedirectStandardError (Join-Path $testRoot 'stderr.log') -PassThru
     $handle=$process.Handle
     if(!$process.WaitForExit(60000)) { throw "GPU fixture timed out: $backend (PID $($process.Id))" }

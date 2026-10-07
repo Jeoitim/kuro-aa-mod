@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: AssemblyTitle("黎之轨迹抗锯齿设置")]
 [assembly: AssemblyProduct("Kuro AA Mod")]
 [assembly: AssemblyVersion("0.3.1.0")]
-[assembly: AssemblyFileVersion("0.3.1.0")]
+[assembly: AssemblyFileVersion("0.3.1.1")]
 
 internal static class Config
 {
@@ -84,8 +84,11 @@ internal static class Config
         RequireStopped();
         if (!File.Exists(PathOf("KuroUI.addon64"))) throw new FileNotFoundException("未找到本抗锯齿 Mod 的场景组件，请检查安装文件。");
         Set(PathOf("KuroUI.ini"),"KuroUI",new Dictionary<string,string> {
-            {"EnableEarlyAA",enabled ? "1":"0"}, {"EarlyUIShaderHash","23f7ff8def7a9871"},
-            {"EarlyUIVertexShaderHash","323e5c4e7ef5ce9"}, {"AllowOffscreenTarget","1"},
+            {"EnableEarlyAA",enabled ? "1":"0"}, {"EarlyUIShaderHash","0"},
+            {"EarlyUIVertexShaderHash","0"}, {"AllowOffscreenTarget","1"},
+            {"EngineUIFunctionRVA","37f480"}, {"EngineUIFunctionHash","533ebf8ba7423d58"},
+            {"EngineImageTimestamp","1730414432"}, {"EngineImageSize","9019392"},
+            {"TraceEngineCallers","0"},
             {"SkipUnmatchedFrames","1"}, {"TraceDraws",capture ? "1":"0"}, {"CaptureCandidates",capture ? "1":"0"}
         });
         if (enabled) Set(PathOf("AeonSR.ini"),"AeonSR",new Dictionary<string,string> { {"KeepInterface","0"}, {"SpatialJitter","0"}, {"UpscaleEffects","0"} });
@@ -264,7 +267,7 @@ internal sealed class SettingsWindow : DarkForm
     private int[] qualityIds=new[]{0,2,3,4,5};
     private int qualityBackend=-1;
     private readonly ComboBox motionQuality=Theme.Combo("Balanced","High");
-    private readonly CheckBox scene=Theme.Check("在界面绘制前处理场景"), capture=Theme.Check("采集绘制目标（诊断）");
+    private readonly CheckBox capture=Theme.Check("采集绘制目标（诊断）");
     private readonly SharpnessSlider sharp=new SharpnessSlider();
     private readonly TextBox sharpValue=new CenteredNumberBox{Text="0.00",BackColor=Theme.Surface,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle};
     private readonly Label status=Theme.LabelOf(""), sceneStatus=Theme.LabelOf("");
@@ -273,26 +276,26 @@ internal sealed class SettingsWindow : DarkForm
     private readonly ToolTip tips=new ToolTip();
     internal SettingsWindow()
     {
-        Text="黎之轨迹抗锯齿 Mod 设置";ClientSize=new Size(640,460);MinimumSize=new Size(656,499);StartPosition=FormStartPosition.CenterScreen;
+        Text="黎之轨迹抗锯齿 Mod 设置（验证版）";ClientSize=new Size(640,460);MinimumSize=new Size(656,499);StartPosition=FormStartPosition.CenterScreen;
         var root=new TableLayoutPanel {Dock=DockStyle.Fill,Padding=new Padding(26,22,26,20),ColumnCount=1,RowCount=5};
         root.RowStyles.Add(new RowStyle(SizeType.Absolute,55));root.RowStyles.Add(new RowStyle(SizeType.Absolute,48));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,52));root.RowStyles.Add(new RowStyle(SizeType.Absolute,28));Controls.Add(root);
         var header=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2};header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));
-        header.Controls.Add(Theme.LabelOf("黎之轨迹抗锯齿",18,true),0,0);var version=Theme.LabelOf("0.3.1");version.ForeColor=Theme.Muted;header.Controls.Add(version,1,0);root.Controls.Add(header,0,0);
+        header.Controls.Add(Theme.LabelOf("黎之轨迹抗锯齿",18,true),0,0);var version=Theme.LabelOf("验证版");version.ForeColor=Theme.Muted;header.Controls.Add(version,1,0);root.Controls.Add(header,0,0);
         var tabs=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false};aaTab.Width=145;uiTab.Width=145;aaTab.FlatAppearance.BorderSize=0;uiTab.FlatAppearance.BorderSize=0;tabs.Controls.AddRange(new Control[]{aaTab,uiTab});root.Controls.Add(tabs,0,1);
         var pages=new Panel {Dock=DockStyle.Fill};aaPage.Dock=scenePage.Dock=DockStyle.Fill;pages.Controls.Add(aaPage);pages.Controls.Add(scenePage);root.Controls.Add(pages,0,2);
         var fields=Grid();aaPage.Controls.Add(fields);
         var sharpRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1};sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));sharp.Dock=DockStyle.Fill;sharpRow.Controls.Add(sharp,0,0);sharpValue.Anchor=AnchorStyles.Left|AnchorStyles.Right;sharpRow.Controls.Add(sharpValue,1,0);sharp.ValueChanged+=delegate{sharpValue.Text=(sharp.Value/100.0).ToString("0.00",System.Globalization.CultureInfo.InvariantCulture);};
         sharpValue.Leave+=delegate{decimal number;if(decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)&&number>=0&&number<=1)sharp.Value=(int)Math.Round(number*100);};
         Row(fields,0,"抗锯齿算法",backend);Row(fields,1,"性能档位",quality);Row(fields,2,"运动估计质量",motionQuality);Row(fields,3,"锐化强度",sharpRow);
-        var sceneFields=Grid();scenePage.Controls.Add(sceneFields);Row(sceneFields,0,"场景渲染",scene);Row(sceneFields,1,"诊断采集",capture);Row(sceneFields,2,"游戏适配",Theme.LabelOf("云豹版 DX11 · 16257982"));Row(sceneFields,3,"未识别的界面",Theme.LabelOf("保留当前原画面"));Row(sceneFields,4,"当前状态",sceneStatus);
+        var sceneFields=Grid();scenePage.Controls.Add(sceneFields);Row(sceneFields,0,"界面隔离",Theme.LabelOf("引擎调用层保护"));Row(sceneFields,1,"诊断采集",capture);Row(sceneFields,2,"游戏适配",Theme.LabelOf("云豹版 DX11 · 16257982"));Row(sceneFields,3,"入口未确认",Theme.LabelOf("保留当前原画面"));Row(sceneFields,4,"当前状态",sceneStatus);
         var actions=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false,Padding=new Padding(0,6,0,0)};
         var save=Theme.ButtonOf("保存设置",true);var launch=Theme.ButtonOf("启动游戏");var logs=Theme.ButtonOf("查看日志");actions.Controls.AddRange(new Control[]{save,launch,toggle,logs});root.Controls.Add(actions,0,3);root.Controls.Add(status,0,4);
-        aaTab.Click+=delegate{ShowTab(false);};uiTab.Click+=delegate{ShowTab(true);};backend.SelectedIndexChanged+=delegate{RefreshControls();};scene.CheckedChanged+=delegate{RefreshControls();};
-        save.Click+=delegate{Run(delegate{Config.RequireStopped();decimal number;if(!decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)||number<0||number>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00，默认 0；需要时推荐 0.03 到 0.08。");sharp.Value=(int)Math.Round(number*100);Config.SetScene(scene.Checked,capture.Checked);Config.SelectBackend(backend.SelectedIndex,qualityIds[Math.Max(0,quality.SelectedIndex)],sharp.Value/100.0f,motionQuality.SelectedIndex);status.Text="设置已保存，下次启动游戏时生效。";status.ForeColor=Theme.Accent;});};
+        aaTab.Click+=delegate{ShowTab(false);};uiTab.Click+=delegate{ShowTab(true);};backend.SelectedIndexChanged+=delegate{RefreshControls();};
+        save.Click+=delegate{Run(delegate{Config.RequireStopped();decimal number;if(!decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)||number<0||number>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00，默认 0；需要时推荐 0.03 到 0.08。");sharp.Value=(int)Math.Round(number*100);Config.SetScene(true,capture.Checked);Config.SelectBackend(backend.SelectedIndex,qualityIds[Math.Max(0,quality.SelectedIndex)],sharp.Value/100.0f,motionQuality.SelectedIndex);status.Text="设置已保存，下次启动游戏时生效。";status.ForeColor=Theme.Accent;});};
         toggle.Click+=delegate{Run(delegate{Config.ToggleInjection(!File.Exists(Config.PathOf("dxgi.dll")));RefreshStatus();});};
         launch.Click+=delegate{Run(delegate{if(!File.Exists(Config.PathOf("ed9.exe")))throw new FileNotFoundException("未找到 ed9.exe，请把设置器放在游戏目录中。");Process.Start(new ProcessStartInfo(Config.PathOf("ed9.exe")){WorkingDirectory=Config.Root,UseShellExecute=true});});};
         logs.Click+=delegate{Run(delegate{string path=Config.PathOf("KuroUI.log");if(!File.Exists(path))path=Config.PathOf("AeonSR.log");if(!File.Exists(path))throw new FileNotFoundException("还没有运行日志，请先启动一次游戏。");Process.Start(path);});};
-        tips.SetToolTip(capture,"仅用于诊断，GPU 回读会造成卡顿。");tips.SetToolTip(scene,"使用已验证的绘制签名，只处理界面之前的场景。");tips.SetToolTip(toggle,"只切换本抗锯齿 Mod 的注入文件。");
+        tips.SetToolTip(capture,"仅用于诊断，GPU 回读会造成卡顿。");tips.SetToolTip(toggle,"只切换本抗锯齿 Mod 的注入文件。");
         tips.SetToolTip(sharpValue,"可填写 0.00–1.00；默认 0；需要时推荐 0.03–0.08。");
         LoadSettings();ShowTab(false);RefreshControls();RefreshStatus();
     }
@@ -307,7 +310,7 @@ internal sealed class SettingsWindow : DarkForm
         var a=Config.Read(Config.PathOf("AeonSR.ini"));var s=Config.Read(Config.PathOf("KuroUI.ini"));
         int b=4,q=0,flow=1;if(a.ContainsKey("Upscaler")&&!int.TryParse(a["Upscaler"],out b))b=4;if(a.ContainsKey("UpscaleMode"))int.TryParse(a["UpscaleMode"],out q);if(a.ContainsKey("InternalFlowQuality"))int.TryParse(a["InternalFlowQuality"],out flow);
         backend.SelectedIndex=!Config.Flag(a,"Enabled",true)||b==3?3:b>=0&&b<3?b:4;int qualityIndex=Array.IndexOf(qualityIds,q);quality.SelectedIndex=qualityIndex>=0?qualityIndex:q==1&&qualityIds.Length>1?1:0;motionQuality.SelectedIndex=Math.Max(0,Math.Min(flow,1));
-        scene.Checked=Config.Flag(s,"EnableEarlyAA",true);capture.Checked=Config.Flag(s,"CaptureCandidates",false);
+        capture.Checked=Config.Flag(s,"CaptureCandidates",false);
         decimal value=0m;if(a.ContainsKey("Sharpness"))decimal.TryParse(a["Sharpness"],System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out value);sharp.Value=(int)(Math.Max(0,Math.Min(1.00m,value))*100);
     }
     private void RefreshControls()
@@ -320,7 +323,7 @@ internal sealed class SettingsWindow : DarkForm
             int index=Array.IndexOf(qualityIds,mode);quality.SelectedIndex=index>=0?index:mode==1&&qualityIds.Length>1?1:0;
         }
         bool vendor=backend.SelectedIndex>=0 && backend.SelectedIndex!=3;quality.Enabled=vendor;motionQuality.Enabled=vendor;sharp.Enabled=sharpValue.Enabled=vendor;
-        sceneStatus.Text=scene.Checked?"场景模式已开启":"旧版全屏处理";sceneStatus.ForeColor=scene.Checked?Theme.Accent:Theme.Muted;
+        sceneStatus.Text="界面保护始终开启";sceneStatus.ForeColor=Theme.Accent;
     }
     private void RefreshStatus()
     {
