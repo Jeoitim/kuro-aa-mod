@@ -12,7 +12,7 @@ if(!(Test-Path -LiteralPath $receiptPath)){
 }
 if (!(Test-Path -LiteralPath $receiptPath)) { throw 'No installation receipt. Refusing to remove unowned files.' }
 $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
-if ($receipt.Package -notin @('Kuro AA 0.2.0','Kuro AA 0.3.0-scene','Kuro AA 0.3.0','Kuro AA 0.3.1') -or $receipt.Version -ne 1) { throw 'Unknown installation receipt.' }
+if ($receipt.Package -notin @('Kuro AA 0.2.0','Kuro AA 0.3.0-scene','Kuro AA 0.3.0','Kuro AA 0.3.1','Kuro AA 0.4.0') -or $receipt.Version -ne 1) { throw 'Unknown installation receipt.' }
 $paths = @()
 foreach ($entry in $receipt.Files) {
     $path = [IO.Path]::GetFullPath((Join-Path $gameRoot $entry.Path))

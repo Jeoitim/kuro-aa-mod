@@ -33,4 +33,4 @@ Copy-Item -LiteralPath (Join-Path $vendor 'reshade\LICENSE.md') -Destination (Jo
 if($LASTEXITCODE){throw 'Settings compilation failed.'}
 $files=@(Get-ChildItem -LiteralPath $output -Recurse -File | ForEach-Object{[pscustomobject]@{Path=$_.FullName.Substring($output.Length+1).Replace('\','/');SHA256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant()}})
 [IO.File]::WriteAllText((Join-Path ([IO.Path]::GetDirectoryName($output)) 'SHA256.json'),($files | ConvertTo-Json -Depth 4))
-Write-Output "Built Kuro AA 0.3.1: $($files.Count) files."
+Write-Output "Built Kuro AA 0.4.0: $($files.Count) files."

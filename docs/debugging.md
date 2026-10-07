@@ -9,7 +9,7 @@ Home 打开 AeonSR，状态应为 ready；MissingRuntime / InitFailed 不算成�
 快转和人物横移观察拖尾；战斗检查粒子、透明特效和遮挡后露出的背景。
 对话、指引和菜单文字应保持清晰。静态截图不足以证明时域画质改善。
 
-若界面模糊，先确认“在界面绘制前处理场景”开启，再记录具体布局。
+若界面模糊，先尝试引擎边界或 Shader 签名规则，再记录具体界面。
 未知节点会跳过 AA；`KuroAA/KuroUI.log` 的 early frames / unmatched skipped 可帮助判断。
 不要靠加强锐化掩盖残影，也不要打开通用抖动配置。
 

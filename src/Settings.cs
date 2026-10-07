@@ -13,8 +13,8 @@ using System.Reflection;
 
 [assembly: AssemblyTitle("黎之轨迹抗锯齿设置")]
 [assembly: AssemblyProduct("Kuro AA Mod")]
-[assembly: AssemblyVersion("0.3.1.0")]
-[assembly: AssemblyFileVersion("0.3.1.1")]
+[assembly: AssemblyVersion("0.4.0.0")]
+[assembly: AssemblyFileVersion("0.4.0.0")]
 
 internal static class Config
 {
@@ -281,7 +281,7 @@ internal sealed class SettingsWindow : DarkForm
     private int[] qualityIds=new[]{0,2,3,4,5};
     private int qualityBackend=-1;
     private readonly ComboBox motionQuality=Theme.Combo("Balanced","High");
-    private readonly ComboBox rule=Theme.Combo("引擎边界（推荐）","Shader 签名（0.3.1）","无规则（全屏 AA）");
+    private readonly ComboBox rule=Theme.Combo("引擎边界","Shader 签名","全屏 AA");
     private readonly CheckBox capture=Theme.Check("采集绘制目标（诊断）");
     private readonly CheckBox preview=Theme.Check("角色界面抗锯齿（实验）");
     private readonly SharpnessSlider sharp=new SharpnessSlider();
@@ -292,18 +292,18 @@ internal sealed class SettingsWindow : DarkForm
     private readonly ToolTip tips=new ToolTip();
     internal SettingsWindow()
     {
-        Text="黎之轨迹抗锯齿 Mod 设置（验证版）";ClientSize=new Size(640,460);MinimumSize=new Size(656,499);StartPosition=FormStartPosition.CenterScreen;
+        Text="黎之轨迹抗锯齿 Mod 设置";ClientSize=new Size(640,460);MinimumSize=new Size(656,499);StartPosition=FormStartPosition.CenterScreen;
         var root=new TableLayoutPanel {Dock=DockStyle.Fill,Padding=new Padding(26,22,26,20),ColumnCount=1,RowCount=5};
         root.RowStyles.Add(new RowStyle(SizeType.Absolute,55));root.RowStyles.Add(new RowStyle(SizeType.Absolute,48));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,52));root.RowStyles.Add(new RowStyle(SizeType.Absolute,28));Controls.Add(root);
         var header=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2};header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));
-        header.Controls.Add(Theme.LabelOf("黎之轨迹抗锯齿",18,true),0,0);var version=Theme.LabelOf("验证版");version.ForeColor=Theme.Muted;header.Controls.Add(version,1,0);root.Controls.Add(header,0,0);
+        header.Controls.Add(Theme.LabelOf("黎之轨迹抗锯齿",18,true),0,0);var version=Theme.LabelOf("0.4.0");version.ForeColor=Theme.Muted;header.Controls.Add(version,1,0);root.Controls.Add(header,0,0);
         var tabs=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false};aaTab.Width=145;uiTab.Width=145;aaTab.FlatAppearance.BorderSize=0;uiTab.FlatAppearance.BorderSize=0;tabs.Controls.AddRange(new Control[]{aaTab,uiTab});root.Controls.Add(tabs,0,1);
         var pages=new Panel {Dock=DockStyle.Fill};aaPage.Dock=scenePage.Dock=DockStyle.Fill;pages.Controls.Add(aaPage);pages.Controls.Add(scenePage);root.Controls.Add(pages,0,2);
         var fields=Grid();aaPage.Controls.Add(fields);
         var sharpRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1};sharpRow.RowStyles.Add(new RowStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));sharp.Dock=DockStyle.Fill;sharp.Margin=Padding.Empty;sharpRow.Controls.Add(sharp,0,0);sharpValue.Dock=DockStyle.Fill;sharpValue.Margin=new Padding(8,0,0,0);sharpRow.Controls.Add(sharpValue,1,0);sharp.ValueChanged+=delegate{sharpValue.Text=(sharp.Value/100.0).ToString("0.00",System.Globalization.CultureInfo.InvariantCulture);};
         sharpValue.Leave+=delegate{decimal number;if(decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)&&number>=0&&number<=1)sharp.Value=(int)Math.Round(number*100);};
         Row(fields,0,"抗锯齿算法",backend);Row(fields,1,"性能档位",quality);Row(fields,2,"运动估计质量",motionQuality);Row(fields,3,"锐化强度",sharpRow);Row(fields,4,"AA 规则",rule);
-        var sceneFields=Grid();scenePage.Controls.Add(sceneFields);Row(sceneFields,0,"当前规则",sceneStatus);Row(sceneFields,1,"角色预览",preview);Row(sceneFields,2,"诊断采集",capture);Row(sceneFields,3,"游戏适配",Theme.LabelOf("云豹版 DX11 · 16257982"));Row(sceneFields,4,"生效时间",Theme.LabelOf("保存后重新启动游戏"));
+        var sceneFields=Grid();scenePage.Controls.Add(sceneFields);Row(sceneFields,0,"当前规则",sceneStatus);Row(sceneFields,1,"角色界面",preview);Row(sceneFields,2,"诊断采集",capture);Row(sceneFields,3,"游戏适配",Theme.LabelOf("黎之轨迹 I · 云豹 1.1.0"));Row(sceneFields,4,"生效时间",Theme.LabelOf("保存后重新启动游戏"));
         var actions=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false,Padding=new Padding(0,6,0,0)};
         var save=Theme.ButtonOf("保存设置",true);var launch=Theme.ButtonOf("启动游戏");var logs=Theme.ButtonOf("查看日志");actions.Controls.AddRange(new Control[]{save,launch,toggle,logs});root.Controls.Add(actions,0,3);root.Controls.Add(status,0,4);
         aaTab.Click+=delegate{ShowTab(false);};uiTab.Click+=delegate{ShowTab(true);};backend.SelectedIndexChanged+=delegate{RefreshControls();};rule.SelectedIndexChanged+=delegate{RefreshControls();};
@@ -342,7 +342,7 @@ internal sealed class SettingsWindow : DarkForm
             int index=Array.IndexOf(qualityIds,mode);quality.SelectedIndex=index>=0?index:mode==1&&qualityIds.Length>1?1:0;
         }
         bool vendor=backend.SelectedIndex>=0 && backend.SelectedIndex!=3;quality.Enabled=vendor;motionQuality.Enabled=vendor;sharp.Enabled=sharpValue.Enabled=vendor;
-        rule.Enabled=vendor;sceneStatus.Text=rule.SelectedIndex==1?"0.3.1 shader 边界":rule.SelectedIndex==2?"全屏模式：UI 也参与 AA":"引擎 UI 边界保护";
+        rule.Enabled=vendor;sceneStatus.Text=rule.SelectedIndex==1?"Shader 签名保护":rule.SelectedIndex==2?"全屏处理（包含界面）":"引擎边界保护";
         preview.Enabled=vendor && rule.SelectedIndex!=2;
         sceneStatus.ForeColor=rule.SelectedIndex==2?Color.FromArgb(241,183,83):Theme.Accent;
     }
