@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "PreviewVendor.hpp"
 
 using namespace reshade;
 using namespace reshade::api;
@@ -26,7 +27,7 @@ std::atomic<bool> tracking{false};
 thread_local bool inside_early=false;
 struct Command { uint64_t ps=0,vs=0; resource_view target{}; resource_view depth{}; bool depth_test=true; };
 struct Pipeline { uint64_t hash=0; bool depth_test=true; };
-struct DrawStat { uint64_t shader=0,vertex_shader=0,target=0; unsigned width=0,height=0,format=0; bool depth=false; unsigned draws=0,vertices=0,first=0,last=0; std::string callers; };
+struct DrawStat { uint64_t shader=0,vertex_shader=0,target=0; unsigned width=0,height=0,format=0; bool depth=false; unsigned draws=0,vertices=0,first=0,last=0; std::string callers,inputs; };
 struct State {
     enum class Rule { Legacy,Engine,Shader,Full };
     Rule rule=Rule::Legacy;
@@ -39,6 +40,14 @@ struct State {
     bool skip_unmatched=true;
     bool capture_candidates=false;
     bool trace_callers=false;
+    bool trace_resources=false;
+    bool preview_enabled=false;
+    bool vendor_preview=false;
+    PreviewVendor preview_vendor;
+    std::unordered_set<uint64_t> preview_keys;
+    std::vector<uint64_t> retired_preview_keys;
+    std::unordered_set<uint64_t> geometry_targets,ui_written_targets,processed_targets;
+    uint64_t preview_count=0,preview_failures=0;
     bool early_requested=false;
     bool engine_requested=false,ui_started=false;
     uint64_t ui_blocked_frames=0;
@@ -83,6 +92,9 @@ void load_profile(State &s)
     s.capture_candidates=GetPrivateProfileIntW(L"KuroUI",L"CaptureCandidates",0,ini.c_str()) != 0;
     s.trace=GetPrivateProfileIntW(L"KuroUI",L"TraceDraws",0,ini.c_str()) != 0;
     s.trace_callers=GetPrivateProfileIntW(L"KuroUI",L"TraceEngineCallers",0,ini.c_str()) != 0;
+    s.trace_resources=GetPrivateProfileIntW(L"KuroUI",L"TraceResources",0,ini.c_str()) != 0;
+    s.vendor_preview=GetPrivateProfileIntW(L"KuroUI",L"PreviewVendorAA",0,ini.c_str()) != 0 && s.rule!=State::Rule::Full;
+    s.preview_enabled = s.vendor_preview;
     s.engine_ui=0;
     s.engine_requested=s.rule==State::Rule::Engine;
     if(s.early_requested && (s.rule==State::Rule::Engine || s.rule==State::Rule::Legacy)){
@@ -125,7 +137,24 @@ void on_init(effect_runtime *runtime)
 void on_destroy(effect_runtime *runtime)
 {
     auto it=states.find(runtime);
-    if(it!=states.end()) states.erase(it);
+    if(it!=states.end()) {
+        using Release=void(*)(effect_runtime*);
+        auto module=GetModuleHandleW(L"AeonSR.addon64");
+        auto cleanup=module?reinterpret_cast<Release>(GetProcAddress(module,"AeonSRReleasePreviewRuntime")):nullptr;
+        if(cleanup){inside_early=true;cleanup(runtime);inside_early=false;}
+        states.erase(it);
+    }
+}
+void on_destroy_resource(device *device,resource resource)
+{
+    for(auto &entry:states){
+        State &s=*entry.second;
+        if(s.runtime->get_device()!=device)continue;
+        // ReShade may release a former game binding inside render_effects.
+        // Defer retirement instead of dropping that notification or reentering AeonSR.
+        if(s.preview_keys.erase(resource.handle))s.retired_preview_keys.push_back(resource.handle);
+        s.geometry_targets.erase(resource.handle);s.processed_targets.erase(resource.handle);s.ui_written_targets.erase(resource.handle);
+    }
 }
 void on_present(command_queue *queue,swapchain *chain,const rect*,const rect*,uint32_t,const rect*)
 {
@@ -150,10 +179,10 @@ void on_present(command_queue *queue,swapchain *chain,const rect*,const rect*,ui
 void dump(State &s)
 {
     std::ofstream file(root / "KuroUI-draws.csv",std::ios::trunc);
-    file << "pixel_shader_hash,vertex_shader_hash,target_width,target_height,target_format,depth_bound,draws,vertices,first_draw,last_draw,engine_callers,target_id\n";
+    file << "pixel_shader_hash,vertex_shader_hash,target_width,target_height,target_format,depth_bound,draws,vertices,first_draw,last_draw,engine_callers,target_id,input_textures\n";
     for(const auto &entry:s.draws) {
         const auto &d=entry.second;
-        file << std::hex << d.shader << ',' << d.vertex_shader << std::dec << ',' << d.width << ',' << d.height << ',' << d.format << ',' << d.depth << ',' << d.draws << ',' << d.vertices << ',' << d.first << ',' << d.last << ',' << d.callers << ',' << std::hex << d.target << std::dec << '\n';
+        file << std::hex << d.shader << ',' << d.vertex_shader << std::dec << ',' << d.width << ',' << d.height << ',' << d.format << ',' << d.depth << ',' << d.draws << ',' << d.vertices << ',' << d.first << ',' << d.last << ',' << d.callers << ',' << std::hex << d.target << std::dec << ',' << d.inputs << '\n';
     }
     s.draws.clear();
     s.captured_keys.clear();
@@ -163,12 +192,13 @@ void on_end(effect_runtime *runtime)
     auto it=states.find(runtime); if(it==states.end()) return;
     State &s=*it->second;
     if(s.frame % 300 == 0) {
-        note("Kuro AA: early frames="+std::to_string(s.early_count)+", engine frames="+std::to_string(s.engine_count)+", unmatched skipped="+std::to_string(s.skipped_count)+", UI-before-scene bypass="+std::to_string(s.ui_blocked_frames));
+        note("Kuro AA: early frames="+std::to_string(s.early_count)+", engine frames="+std::to_string(s.engine_count)+", unmatched skipped="+std::to_string(s.skipped_count)+", UI-before-scene bypass="+std::to_string(s.ui_blocked_frames)+", preview AA="+std::to_string(s.preview_count)+", preview failures="+std::to_string(s.preview_failures));
         if(s.trace) dump(s);
     }
     s.in_present=false; s.early=false; s.draw_index=0; ++s.frame;
     s.scene_width=s.scene_height=0;
     s.ui_started=false;release(s.scene_target);s.scene_command=nullptr;
+    s.geometry_targets.clear();s.ui_written_targets.clear();s.processed_targets.clear();
 }
 uint64_t shader_hash(const void *code,size_t size)
 {
@@ -275,6 +305,25 @@ std::string engine_callers()
     for(const auto rva:engine_frames()){if(!first)result << '|';result << std::hex << rva;first=false;}
     return result.str();
 }
+std::string texture_inputs(command_list *cmd)
+{
+    auto *context=reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+    ID3D11ShaderResourceView *views[8]{};context->PSGetShaderResources(0,8,views);
+    std::ostringstream result;bool first=true;
+    for(unsigned slot=0;slot<8;++slot){
+        if(!views[slot])continue;
+        ID3D11Resource *resource=nullptr;ID3D11Texture2D *texture=nullptr;
+        views[slot]->GetResource(&resource);
+        if(resource && SUCCEEDED(resource->QueryInterface(IID_PPV_ARGS(&texture)))){
+            D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);
+            if(!first)result << '|';first=false;
+            result << 's' << slot << '=' << std::hex << reinterpret_cast<uintptr_t>(texture) << std::dec
+                << '@' << desc.Width << 'x' << desc.Height << ':' << unsigned(desc.Format);
+        }
+        release(texture);release(resource);release(views[slot]);
+    }
+    return result.str();
+}
 bool draw(command_list *cmd,uint32_t vertices)
 {
     if(!tracking.load(std::memory_order_relaxed) || inside_early || cmd->get_device()->get_api()!=device_api::d3d11) return false;
@@ -287,7 +336,7 @@ bool draw(command_list *cmd,uint32_t vertices)
     for(const auto &entry:states) {
         const State &s=*entry.second;
         interested |= s.runtime->get_device()==cmd->get_device() && !s.in_present
-            && (s.trace || (s.engine_ui && !s.early && !s.ui_started) || (!s.engine_requested && !s.early && s.early_hash==c.ps && !depth_active));
+            && (s.trace || (s.preview_enabled && (s.engine_ui || s.early_hash)) || (s.engine_ui && !s.early && !s.ui_started) || (!s.engine_requested && !s.early && s.early_hash==c.ps && !depth_active));
     }
     if(!interested) return false;
     auto resource=cmd->get_device()->get_resource_from_view(c.target);
@@ -295,7 +344,55 @@ bool draw(command_list *cmd,uint32_t vertices)
     for(auto &entry:states) {
         State &s=*entry.second;
         if(s.runtime->get_device()!=cmd->get_device() || s.in_present) continue;
-        if(s.ui_started && !s.trace)continue;
+        if(s.ui_started && !s.trace && !s.preview_enabled)continue;
+        if(s.preview_enabled){
+            const auto format=static_cast<unsigned>(desc.texture.format);
+            if(depth_active && desc.type==resource_type::texture_2d && desc.texture.depth_or_layers==1
+                && desc.texture.samples==1 && desc.texture.width>=64 && desc.texture.height>=64 && (format==28 || format==87))
+                s.geometry_targets.insert(resource.handle);
+            bool ui=false;
+            if(!depth_active){
+                if(s.engine_ui){const auto frames=engine_frames();ui=std::find(frames.begin(),frames.end(),s.engine_ui)!=frames.end();}
+                else ui=s.early_hash && c.ps==s.early_hash && (!s.early_vs || c.vs==s.early_vs);
+            }
+            if(ui){
+                auto *context=reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+                ID3D11ShaderResourceView *view=nullptr;context->PSGetShaderResources(0,1,&view);
+                ID3D11Resource *input=nullptr;ID3D11Texture2D *texture=nullptr;
+                if(view)view->GetResource(&input);
+                if(input && SUCCEEDED(input->QueryInterface(IID_PPV_ARGS(&texture)))){
+                    const uint64_t id=reinterpret_cast<uintptr_t>(texture);
+                    if(id!=resource.handle && s.geometry_targets.count(id) && !s.ui_written_targets.count(id) && !s.processed_targets.count(id)){
+                        std::string error;inside_early=true;
+                        bool applied=false;
+                        if(s.vendor_preview){
+                            using Process=int(*)(effect_runtime*,command_list*,uint64_t,uint64_t,uint64_t);
+                            using Version=unsigned(*)();
+                            auto module=GetModuleHandleW(L"AeonSR.addon64");
+                            auto process=module?reinterpret_cast<Process>(GetProcAddress(module,"AeonSRProcessPreview")):nullptr;
+                            auto version=module?reinterpret_cast<Version>(GetProcAddress(module,"AeonSRPreviewVersion")):nullptr;
+                            if(!version || version()!=2)process=nullptr;
+                            if(process){
+                                using Retire=void(*)(effect_runtime*,uint64_t);
+                                auto retire=reinterpret_cast<Retire>(GetProcAddress(module,"AeonSRReleasePreview"));
+                                if(retire)for(auto retired:s.retired_preview_keys)retire(s.runtime,retired);
+                                s.retired_preview_keys.clear();
+                                s.preview_keys.insert(id);
+                                const int result=s.preview_vendor.run(context,texture,[&]{return process(s.runtime,cmd,id,id,s.frame);},error);
+                                applied=result==1;
+                                // Loading is normal, and must not retry a view within this frame.
+                                if(result>=0)s.processed_targets.insert(id);
+                            }else error="Custom AeonSR preview interface missing.";
+                        }
+                        inside_early=false;
+                        if(applied){++s.preview_count;s.processed_targets.insert(id);}
+                        else if(!error.empty()){++s.preview_failures;if(s.preview_failures==1)note("Kuro AA: preview AA unavailable: "+error);}
+                    }
+                }
+                release(texture);release(input);release(view);
+                s.ui_written_targets.insert(resource.handle);
+            }
+        }
         // The engine route tracks the largest SDR/HDR geometry color target, never shadow maps.
         const unsigned target_format=static_cast<unsigned>(desc.texture.format);
         if(s.engine_ui && !s.ui_started && depth_active && desc.type==resource_type::texture_2d && desc.texture.depth_or_layers==1
@@ -308,10 +405,12 @@ bool draw(command_list *cmd,uint32_t vertices)
         if(s.trace && (!s.trace_callers || s.frame%120==60)) {
             // Sample one frame per two seconds at 60 Hz. No GPU readback is needed.
             const std::string callers=s.trace_callers && s.frame%120==60 ? engine_callers() : "";
+            const std::string inputs=s.trace_resources && s.frame%120==60 ? texture_inputs(cmd) : "";
             ++s.draw_index;
-            std::string key=std::to_string(c.ps)+":"+std::to_string(c.vs)+":"+std::to_string(resource.handle)+":"+std::to_string(c.depth.handle!=0)+":"+callers;
+            std::string key=std::to_string(c.ps)+":"+std::to_string(c.vs)+":"+std::to_string(resource.handle)+":"+std::to_string(c.depth.handle!=0)+":"+callers+":"+inputs;
             auto &d=s.draws[key]; d.shader=c.ps; d.vertex_shader=c.vs; d.width=desc.texture.width; d.height=desc.texture.height; d.format=static_cast<unsigned>(desc.texture.format); d.depth=depth_active;
             d.callers=callers;
+            d.inputs=inputs;
             d.target=resource.handle;
             if(!d.draws) d.first=s.draw_index;
             ++d.draws; d.vertices+=vertices; d.last=s.draw_index;
@@ -364,6 +463,7 @@ bool draw(command_list *cmd,uint32_t vertices)
         s.early=true; ++s.early_count; inside_early=true;
         if(engine_match)++s.engine_count;
         s.runtime->render_effects(cmd,processing_target,{});
+        s.processed_targets.insert(cmd->get_device()->get_resource_from_view(processing_target).handle);
         inside_early=false;
     }
     return false;
@@ -385,6 +485,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID)
         if(!register_addon(module)) return FALSE;
         wchar_t path[MAX_PATH]{}; GetModuleFileNameW(module,path,MAX_PATH); root=std::filesystem::path(path).parent_path();
         register_event<addon_event::init_effect_runtime>(on_init); register_event<addon_event::destroy_effect_runtime>(on_destroy);
+        register_event<addon_event::destroy_resource>(on_destroy_resource);
         register_event<addon_event::present>(on_present);
         register_event<addon_event::reshade_present>(on_end); register_event<addon_event::init_pipeline>(on_pipeline);
         register_event<addon_event::destroy_pipeline>(on_pipeline_destroy); register_event<addon_event::bind_pipeline>(on_bind);

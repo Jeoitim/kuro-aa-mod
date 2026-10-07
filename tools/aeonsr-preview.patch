@@ -1,0 +1,109 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 6786cf2..2e20ea9 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -40,6 +40,13 @@ set(AEONSR_LICENSE_FILES
+   "${AEONSR_XESS_SDK}/LICENSE.txt|Intel_XeSS_LICENSE.txt"
+   "${AEONSR_FFX_SDK}/docs/license.md|AMD_FidelityFX_LICENSE.md")
+ set(MINHOOK_DIR "${RESHADE_ROOT}/deps/minhook")
++set(AEONSR_BUNDLED_RUNTIME "" CACHE PATH "Reuse verified portable runtimes")
++if(AEONSR_BUNDLED_RUNTIME)
++  set(AEONSR_RUNTIME_FILES)
++  foreach(name nvngx_dlss.dll libxess.dll libxess_dx11.dll amd_fidelityfx_upscaler_dx12.dll amd_fidelityfx_loader_dx12.dll)
++    list(APPEND AEONSR_RUNTIME_FILES "${AEONSR_BUNDLED_RUNTIME}/${name}")
++  endforeach()
++endif()
+ 
+ set(_aeonsr_hint "Run: git submodule update --init --depth 1 && git -C external/reshade submodule update --init --depth 1 deps/imgui deps/minhook deps/spirv")
+ foreach(_req
+@@ -82,6 +89,7 @@ add_library(aeon_sr_minhook STATIC
+ target_include_directories(aeon_sr_minhook PUBLIC "${MINHOOK_DIR}/include")
+ 
+ set(AEONSR_SOURCES
++  ${CMAKE_CURRENT_SOURCE_DIR}/../../src/AeonPreview.cpp
+   src/core/addon_main.cpp
+   src/core/app.cpp
+   src/upscalers/backend_dlss.cpp
+diff --git a/src/core/addon_main.cpp b/src/core/addon_main.cpp
+index 8d5aa66..c50fd32 100644
+--- a/src/core/addon_main.cpp
++++ b/src/core/addon_main.cpp
+@@ -13,17 +13,24 @@
+ #include <cwctype>
+ 
+ using namespace aeon_sr;
++namespace aeon_sr {
++bool preview_device_building();
++void preview_release_device(reshade::api::device *);
++void preview_release_all();
++}
+ 
+ namespace {
+ 
+ void on_init_device(reshade::api::device *device)
+ {
++	if (preview_device_building()) return;
+ 	if (auto *a = app())
+ 		a->on_init_device(device);
+ }
+ 
+ void on_destroy_device(reshade::api::device *device)
+ {
++	preview_release_device(device);
+ 	if (auto *a = app())
+ 		a->on_destroy_device(device);
+ }
+@@ -199,6 +206,7 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon_module, HMODULE
+ 		RemoveVectoredExceptionHandler(g_driver_fault_handler);
+ 		g_driver_fault_handler = nullptr;
+ 	}
++	preview_release_all();
+ 	destroy_app();
+ 	diag_set_sink(nullptr);
+ 	diag_info("aeonsr", L"add-on unloaded");
+diff --git a/src/upscalers/backend_dlss.cpp b/src/upscalers/backend_dlss.cpp
+index b4f5c9d..c79dc2a 100644
+--- a/src/upscalers/backend_dlss.cpp
++++ b/src/upscalers/backend_dlss.cpp
+@@ -102,7 +102,7 @@ bool DlssD3D12Backend::run(
+ 		return false;
+ 	}
+ 
+-	rt->run(inputs.engine.cmd,
++	const bool evaluated = rt->run(inputs.engine.cmd,
+ 		inputs.engine.color,
+ 		inputs.engine.color_state,
+ 		inputs.engine.motion,
+@@ -110,7 +110,7 @@ bool DlssD3D12Backend::run(
+ 		native_handle<ID3D12Resource>(params.bias_mask));
+ 
+ 	sync_status(*this, *rt);
+-	return !rt->crashed;
++	return evaluated && !rt->crashed;
+ }
+ 
+ }
+diff --git a/src/upscalers/backend_xess.cpp b/src/upscalers/backend_xess.cpp
+index a858f9c..172429f 100644
+--- a/src/upscalers/backend_xess.cpp
++++ b/src/upscalers/backend_xess.cpp
+@@ -9,8 +9,10 @@
+ #include <d3d12.h>
+ 
+ #include <cstring>
++#include <mutex>
+ 
+ namespace aeon_sr {
++namespace { std::mutex xess_build_mutex; }
+ 
+ static constexpr uint32_t kXessInitFlags =
+ 	XESS_INIT_FLAG_HIGH_RES_MV | XESS_INIT_FLAG_ENABLE_AUTOEXPOSURE | XESS_INIT_FLAG_LDR_INPUT_COLOR;
+@@ -121,6 +123,8 @@ void XessD3D12Backend::shutdown()
+ 
+ bool XessD3D12Backend::build(ID3D12Device *device, uint32_t w, uint32_t h, uint32_t quality, float scale)
+ {
++	// Multiple views must not initialize the shared runtime/cache concurrently.
++	std::lock_guard<std::mutex> guard(xess_build_mutex);
+ 	LARGE_INTEGER freq{}, t0{}, t1{};
+ 	QueryPerformanceFrequency(&freq);
+ 	QueryPerformanceCounter(&t0);

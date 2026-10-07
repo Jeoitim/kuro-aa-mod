@@ -21,6 +21,7 @@ function Run-Settings([string[]]$arguments){
 Run-Settings @('--self-test')
 $ruleFile=Join-Path $root 'KuroAA\KuroUI.ini'
 if((Get-Content -LiteralPath $ruleFile -Raw) -notmatch '(?m)^AARule=engine'){throw 'Default engine rule missing.'}
+if((Get-Content -LiteralPath $ruleFile -Raw) -notmatch '(?m)^PreviewVendorAA=0\r?$'){throw 'Experimental character AA must default to off.'}
 foreach($rule in @('engine','shader','full')){
     Run-Settings @('--rule',$rule)
     $ini=Get-Content -LiteralPath $ruleFile -Raw

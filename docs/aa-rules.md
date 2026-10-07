@@ -43,15 +43,11 @@ UI 首批位于辅助纹理时，也可先处理缓存场景。UI 开始后封�
 
 ## 装备 / 换装 3D 展示
 
-文字清晰与 3D 展示 AA 覆盖是不同问题。预览可能是独立视图、晚于首批 UI 绘制，
-或者经过 UI 合成才进入最终画面；仅靠观感还不能确定哪种情况发生。
+文字清晰与 3D 展示 AA 覆盖是不同问题。实际装备页采样确认模型先绘制到独立纹理，
+随后作为 UI 输入合成；首批 UI 比这次合成更早，主场景 AA 因此可能漏掉模型。
 
-长期完整支持需要捕获该视图的渲染完成出口，并为不同相机维护独立颜色 / 深度 / 光流及厂商历史。
-当前 ReShade 每帧一次处理与 AeonSR 单套历史不能直接用于多个视图重复重建。
+验证版增加默认关闭的“角色界面抗锯齿（实验）”，通过资源关联在合成前处理模型纹理。
+定制 AeonSR 为预览保存独立光流及厂商历史，绕过主场景每帧一次回调限制。
+引擎边界和 Shader 签名两种规则均可启用，预览不借用主场景的深度或投影抖动。
+完整覆盖、真实画质和性能仍需游戏验收，详见 [厂商预览](vendor-preview.md)。
 关闭规则可用于 A/B 判断最终画面处理是否能改善预览，但会失去 UI 保护，不作为默认建议。
-
-也可以为独立角色视图做专门的空间 AA 或更高分辨率渲染后缩回 UI 区域，避免与主相机共享时域历史。
-这需要同时适配该视图的颜色 / 深度目标与 viewport，不是已经完成的功能。
-若选择 MSAA 路线，颜色和深度采样数必须一致，并需解析为单采样纹理供后续合成。
-参考 [Microsoft 的深度配置说明](https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-depth-stencil)
-和 [ResolveSubresource](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-resolvesubresource)。

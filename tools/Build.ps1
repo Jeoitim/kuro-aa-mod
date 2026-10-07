@@ -1,4 +1,4 @@
-param([string]$NativeUIDirectory,[string]$OutputDirectory,[string]$Compiler="$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
+param([string]$NativeUIDirectory,[string]$OutputDirectory,[string]$AeonPreviewDirectory,[string]$Compiler="$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $vendor=Join-Path $root 'vendor'
@@ -19,6 +19,10 @@ Copy-Item -LiteralPath (Join-Path $vendor 'reshade\dxgi.dll') -Destination $outp
 Copy-Item -LiteralPath (Join-Path $root 'packaging\ReShade.ini') -Destination $output
 foreach($name in @('AeonSR.addon64','AeonSRPrebuild.exe','runtime','Licenses')){
     Copy-Item -LiteralPath (Join-Path $vendor ('aeonsr\'+$name)) -Destination $mod -Recurse
+}
+if($AeonPreviewDirectory){
+    Copy-Item -LiteralPath (Join-Path $AeonPreviewDirectory 'AeonSR.addon64') -Destination $mod -Force
+    Copy-Item -LiteralPath (Join-Path $AeonPreviewDirectory 'AeonSRPrebuild.exe') -Destination $mod -Force
 }
 Copy-Item -LiteralPath $native -Destination $mod
 foreach($name in @('AeonSR.ini','Native.ini','Shaders')){Copy-Item -LiteralPath (Join-Path $root ('packaging\'+$name)) -Destination $mod -Recurse}

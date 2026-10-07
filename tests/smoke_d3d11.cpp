@@ -29,7 +29,7 @@ V VS(uint id : SV_VertexID) {
 }
 float4 PS(V input) : SV_Target {
     float lines = (frac((input.pos.x+input.pos.y)*0.125) > 0.5) ? 0.75 : 1.0;
-    return float4(input.color*lines,1);
+    return float4(input.color*lines,unused.x>0.5?0.35:1);
 }
 V VSFull(uint id : SV_VertexID) {
     V v; float2 uv=float2(id==2?2:0,id==1?2:0);
@@ -38,6 +38,7 @@ V VSFull(uint id : SV_VertexID) {
 float4 PSCopy(V input) : SV_Target { return scene_texture.SampleLevel(scene_sampler,input.uv,0); }
 float4 PSHUD(V input) : SV_Target {
     int2 p=int2(input.pos.xy);
+    if(unused.y>0.5 && p.y<260)return scene_texture.SampleLevel(scene_sampler,input.uv,0);
     if(p.x<20 || p.x>=620 || p.y<280 || p.y>=345) discard;
     int advance=int(frame/8)%9;
     bool stroke=((p.x+advance)%11<2 || p.y%17<2);
@@ -61,8 +62,10 @@ int main(int argc,char **argv)
     const bool uiOnly=argc > 2 && std::strcmp(argv[2],"ui-only")==0;
     const bool uiAux=argc > 2 && std::strcmp(argv[2],"ui-aux")==0;
     const bool uiFirstAux=argc > 2 && std::strcmp(argv[2],"ui-first-aux")==0;
+    const bool previewRecreate=argc > 2 && std::strcmp(argv[2],"preview-recreate")==0;
+    const bool previewTest=previewRecreate || (argc > 2 && std::strcmp(argv[2],"preview")==0);
     const bool letterbox=uiFirst || uiOnly || uiAux || uiFirstAux || (argc > 2 && std::strcmp(argv[2],"letterbox")==0);
-    const bool offscreen=letterbox || (argc > 2 && std::strcmp(argv[2],"offscreen")==0);
+    const bool offscreen=previewTest || letterbox || (argc > 2 && std::strcmp(argv[2],"offscreen")==0);
     try {
         WNDCLASSW wc{}; wc.lpfnWndProc=DefWindowProcW; wc.hInstance=GetModuleHandleW(nullptr); wc.lpszClassName=L"KuroSmoke";
         RegisterClassW(&wc);
@@ -124,9 +127,17 @@ int main(int argc,char **argv)
         ID3D11RasterizerState *rs=nullptr; Check(device->CreateRasterizerState(&rsDesc,&rs),"RS");
         D3D11_VIEWPORT viewport{0,0,640,360,0,1};
         for(int i=0;i<frames;++i) {
+            if(previewRecreate && i>0 && i%120==0){
+                context->OMSetRenderTargets(0,nullptr,nullptr);
+                D3D11_TEXTURE2D_DESC d{};scene->GetDesc(&d);
+                ID3D11Texture2D *next=nullptr;Check(device->CreateTexture2D(&d,nullptr,&next),"replacement preview");
+                Release(sceneView);Release(sceneTarget);Release(scene);scene=next;
+                Check(device->CreateRenderTargetView(scene,nullptr,&sceneTarget),"replacement RTV");
+                Check(device->CreateShaderResourceView(scene,nullptr,&sceneView),"replacement SRV");
+            }
             MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
-            float params[4]={0.12f*std::sin(i*0.012f),float(i),0,0}; context->UpdateSubresource(cb,0,nullptr,params,0,0);
-            const float background[4]={0.09f,0.13f,0.18f,1};
+            float params[4]={0.12f*std::sin(i*0.012f),float(i),previewTest?1.0f:0.0f,0}; context->UpdateSubresource(cb,0,nullptr,params,0,0);
+            const float background[4]={0.09f,0.13f,0.18f,previewTest?0.0f:1.0f};
             ID3D11RenderTargetView *renderTarget=offscreen?sceneTarget:target;
             context->OMSetRenderTargets(1,&renderTarget,dsv); context->ClearRenderTargetView(renderTarget,background); context->ClearDepthStencilView(dsv,D3D11_CLEAR_DEPTH,1,0);
             if(uiFirst)SubmitUI(context,renderTarget,hudDepthState,hudVS,hudPS,cb);
@@ -134,9 +145,17 @@ int main(int argc,char **argv)
             context->OMSetDepthStencilState(nullptr,0);context->OMSetRenderTargets(1,&renderTarget,dsv);
             context->RSSetState(rs); context->RSSetViewports(1,&viewport); context->VSSetShader(vs,nullptr,0); context->PSSetShader(ps,nullptr,0);
             context->VSSetConstantBuffers(0,1,&cb); context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST); if(!uiOnly)context->Draw(3,0);
+            if(previewTest){
+                const float backdrop[4]={0.09f,0.13f,0.18f,1};context->ClearRenderTargetView(target,backdrop);
+                SubmitUI(context,target,hudDepthState,hudVS,hudPS,cb);
+                params[3]=1;context->UpdateSubresource(cb,0,nullptr,params,0,0);
+                context->PSSetShaderResources(0,1,&sceneView);context->PSSetSamplers(0,1,&sceneSampler);
+                SubmitUI(context,target,hudDepthState,hudVS,hudPS,cb);
+                ID3D11ShaderResourceView *empty=nullptr;context->PSSetShaderResources(0,1,&empty);
+            }
             if(uiAux)SubmitUI(context,auxiliaryTarget,hudDepthState,hudVS,hudPS,cb);
-            SubmitUI(context,renderTarget,hudDepthState,hudVS,hudPS,cb);
-            if(offscreen) {
+            if(!previewTest)SubmitUI(context,renderTarget,hudDepthState,hudVS,hudPS,cb);
+            if(offscreen && !previewTest) {
                 context->OMSetRenderTargets(1,&target,nullptr); context->PSSetShader(copyPS,nullptr,0);
                 context->PSSetShaderResources(0,1,&sceneView); context->PSSetSamplers(0,1,&sceneSampler); context->Draw(3,0);
                 ID3D11ShaderResourceView *empty=nullptr; context->PSSetShaderResources(0,1,&empty);
@@ -150,7 +169,7 @@ int main(int argc,char **argv)
         std::vector<unsigned char> pixels(640*360*4); double sum=0;
         for(int y=0;y<360;++y) for(int x=0;x<640;++x) {
             auto src=static_cast<const unsigned char *>(map.pData)+y*map.RowPitch+x*4; auto dst=pixels.data()+(y*640+x)*4;
-            dst[0]=src[2]; dst[1]=src[1]; dst[2]=src[0]; dst[3]=255; sum+=src[0]+src[1]+src[2];
+            dst[0]=src[2]; dst[1]=src[1]; dst[2]=src[0]; dst[3]=previewTest?src[3]:255; sum+=src[0]+src[1]+src[2];
         }
         context->Unmap(stage,0);
         BITMAPFILEHEADER file{}; file.bfType=0x4d42; file.bfOffBits=sizeof(file)+sizeof(BITMAPINFOHEADER); file.bfSize=file.bfOffBits+DWORD(pixels.size());

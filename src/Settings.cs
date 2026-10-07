@@ -175,19 +175,24 @@ internal sealed class SharpnessSlider : Control
     protected override void OnMouseUp(MouseEventArgs e){Capture=false;base.OnMouseUp(e);}
     protected override bool IsInputKey(Keys key){return key==Keys.Left||key==Keys.Right||key==Keys.Home||key==Keys.End||base.IsInputKey(key);}
     protected override void OnKeyDown(KeyEventArgs e){if(e.KeyCode==Keys.Left)Value--;else if(e.KeyCode==Keys.Right)Value++;else if(e.KeyCode==Keys.Home)Value=0;else if(e.KeyCode==Keys.End)Value=100;base.OnKeyDown(e);}
-    protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(BackColor);int y=Height/2,x=8+(Width-16)*Value/100;using(var pen=new Pen(Theme.Border,4))e.Graphics.DrawLine(pen,8,y,Width-8,y);using(var pen=new Pen(Enabled?Theme.Accent:Theme.Muted,4))e.Graphics.DrawLine(pen,8,y,x,y);using(var brush=new SolidBrush(Enabled?Theme.Accent:Theme.Muted))e.Graphics.FillEllipse(brush,x-7,y-7,14,14);if(Focused)using(var pen=new Pen(Theme.Muted))e.Graphics.DrawRectangle(pen,0,0,Width-1,Height-1);}
+    protected override void OnGotFocus(EventArgs e){base.OnGotFocus(e);Invalidate();}
+    protected override void OnLostFocus(EventArgs e){base.OnLostFocus(e);Invalidate();}
+    protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(BackColor);int y=Height/2,x=8+(Width-16)*Value/100;using(var pen=new Pen(Theme.Border,4))e.Graphics.DrawLine(pen,8,y,Width-8,y);using(var pen=new Pen(Enabled?Theme.Accent:Theme.Muted,4))e.Graphics.DrawLine(pen,8,y,x,y);using(var brush=new SolidBrush(Enabled?Theme.Accent:Theme.Muted))e.Graphics.FillEllipse(brush,x-7,y-7,14,14);if(Focused)using(var pen=new Pen(Theme.Accent))e.Graphics.DrawEllipse(pen,x-8,y-8,16,16);}
 }
 
-internal sealed class CenteredNumberBox : TextBox
+internal sealed class CenteredNumberBox : UserControl
 {
-    [StructLayout(LayoutKind.Sequential)] private struct TextRect {public int Left,Top,Right,Bottom;}
-    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window,int message,IntPtr wParam,ref TextRect rect);
-    internal CenteredNumberBox(){Multiline=true;AutoSize=false;Height=34;TextAlign=HorizontalAlignment.Center;AcceptsReturn=false;WordWrap=false;}
-    private void CenterText(){if(!IsHandleCreated)return;int line=TextRenderer.MeasureText("0.00",Font,Size.Empty,TextFormatFlags.NoPadding).Height;int top=Math.Max(0,(ClientSize.Height-line)/2+3);var rect=new TextRect{Left=3,Top=top,Right=ClientSize.Width-3,Bottom=Math.Min(ClientSize.Height,top+line)};SendMessage(Handle,0x00B4,IntPtr.Zero,ref rect);}
-    protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);CenterText();}
-    protected override void OnResize(EventArgs e){base.OnResize(e);CenterText();}
-    protected override void OnFontChanged(EventArgs e){base.OnFontChanged(e);CenterText();}
-    protected override void OnKeyPress(KeyPressEventArgs e){if(e.KeyChar=='\r'||e.KeyChar=='\n')e.Handled=true;base.OnKeyPress(e);}
+    private readonly TextBox editor=new TextBox{BorderStyle=BorderStyle.None,TextAlign=HorizontalAlignment.Center,Margin=Padding.Empty};
+    internal CenteredNumberBox(){SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);Height=34;BackColor=Theme.Surface;ForeColor=Theme.Text;Controls.Add(editor);editor.Enter+=delegate{Invalidate();};editor.Leave+=delegate{Invalidate();};editor.TextChanged+=delegate{OnTextChanged(EventArgs.Empty);};}
+    public override string Text {get{return editor==null?base.Text:editor.Text;}set{if(editor==null)base.Text=value;else editor.Text=value;}}
+    protected override void OnLayout(LayoutEventArgs e){base.OnLayout(e);editor.Width=Math.Max(1,ClientSize.Width-8);editor.Location=new Point(4,Math.Max(2,(ClientSize.Height-editor.PreferredHeight)/2));}
+    protected override void OnFontChanged(EventArgs e){base.OnFontChanged(e);if(editor!=null){editor.Font=Font;PerformLayout();}}
+    protected override void OnBackColorChanged(EventArgs e){base.OnBackColorChanged(e);if(editor!=null)editor.BackColor=BackColor;}
+    protected override void OnForeColorChanged(EventArgs e){base.OnForeColorChanged(e);if(editor!=null)editor.ForeColor=ForeColor;}
+    protected override void OnEnter(EventArgs e){base.OnEnter(e);editor.Focus();}
+    protected override void OnMouseDown(MouseEventArgs e){base.OnMouseDown(e);editor.Focus();}
+    protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(BackColor);using(var pen=new Pen(ContainsFocus?Theme.Accent:Theme.Border))e.Graphics.DrawRectangle(pen,0,0,Width-1,Height-1);}
+    internal void VerifyBorder(){CreateControl();using(var bitmap=new Bitmap(Width,Height)){DrawToBitmap(bitmap,ClientRectangle);foreach(var point in new[]{new Point(Width/2,0),new Point(Width/2,Height-1),new Point(0,Height/2),new Point(Width-1,Height/2)})if(bitmap.GetPixel(point.X,point.Y).ToArgb()!=Theme.Border.ToArgb())throw new Exception("数值输入框四边绘制测试失败。");}}
 }
 
 internal sealed class DarkButton : Button
@@ -278,8 +283,9 @@ internal sealed class SettingsWindow : DarkForm
     private readonly ComboBox motionQuality=Theme.Combo("Balanced","High");
     private readonly ComboBox rule=Theme.Combo("引擎边界（推荐）","Shader 签名（0.3.1）","无规则（全屏 AA）");
     private readonly CheckBox capture=Theme.Check("采集绘制目标（诊断）");
+    private readonly CheckBox preview=Theme.Check("角色界面抗锯齿（实验）");
     private readonly SharpnessSlider sharp=new SharpnessSlider();
-    private readonly TextBox sharpValue=new CenteredNumberBox{Text="0.00",BackColor=Theme.Surface,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle};
+    private readonly CenteredNumberBox sharpValue=new CenteredNumberBox{Text="0.00",BackColor=Theme.Surface,ForeColor=Theme.Text};
     private readonly Label status=Theme.LabelOf(""), sceneStatus=Theme.LabelOf("");
     private readonly Panel aaPage=new Panel(), scenePage=new Panel();
     private readonly Button aaTab=Theme.ButtonOf("抗锯齿"), uiTab=Theme.ButtonOf("场景与界面"), toggle=Theme.ButtonOf("关闭注入");
@@ -294,14 +300,14 @@ internal sealed class SettingsWindow : DarkForm
         var tabs=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false};aaTab.Width=145;uiTab.Width=145;aaTab.FlatAppearance.BorderSize=0;uiTab.FlatAppearance.BorderSize=0;tabs.Controls.AddRange(new Control[]{aaTab,uiTab});root.Controls.Add(tabs,0,1);
         var pages=new Panel {Dock=DockStyle.Fill};aaPage.Dock=scenePage.Dock=DockStyle.Fill;pages.Controls.Add(aaPage);pages.Controls.Add(scenePage);root.Controls.Add(pages,0,2);
         var fields=Grid();aaPage.Controls.Add(fields);
-        var sharpRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1};sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));sharp.Dock=DockStyle.Fill;sharpRow.Controls.Add(sharp,0,0);sharpValue.Anchor=AnchorStyles.Left|AnchorStyles.Right;sharpRow.Controls.Add(sharpValue,1,0);sharp.ValueChanged+=delegate{sharpValue.Text=(sharp.Value/100.0).ToString("0.00",System.Globalization.CultureInfo.InvariantCulture);};
+        var sharpRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1};sharpRow.RowStyles.Add(new RowStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sharpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,65));sharp.Dock=DockStyle.Fill;sharp.Margin=Padding.Empty;sharpRow.Controls.Add(sharp,0,0);sharpValue.Dock=DockStyle.Fill;sharpValue.Margin=new Padding(8,0,0,0);sharpRow.Controls.Add(sharpValue,1,0);sharp.ValueChanged+=delegate{sharpValue.Text=(sharp.Value/100.0).ToString("0.00",System.Globalization.CultureInfo.InvariantCulture);};
         sharpValue.Leave+=delegate{decimal number;if(decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)&&number>=0&&number<=1)sharp.Value=(int)Math.Round(number*100);};
         Row(fields,0,"抗锯齿算法",backend);Row(fields,1,"性能档位",quality);Row(fields,2,"运动估计质量",motionQuality);Row(fields,3,"锐化强度",sharpRow);Row(fields,4,"AA 规则",rule);
-        var sceneFields=Grid();scenePage.Controls.Add(sceneFields);Row(sceneFields,0,"当前规则",sceneStatus);Row(sceneFields,1,"诊断采集",capture);Row(sceneFields,2,"游戏适配",Theme.LabelOf("云豹版 DX11 · 16257982"));Row(sceneFields,3,"生效时间",Theme.LabelOf("保存后重新启动游戏"));
+        var sceneFields=Grid();scenePage.Controls.Add(sceneFields);Row(sceneFields,0,"当前规则",sceneStatus);Row(sceneFields,1,"角色预览",preview);Row(sceneFields,2,"诊断采集",capture);Row(sceneFields,3,"游戏适配",Theme.LabelOf("云豹版 DX11 · 16257982"));Row(sceneFields,4,"生效时间",Theme.LabelOf("保存后重新启动游戏"));
         var actions=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false,Padding=new Padding(0,6,0,0)};
         var save=Theme.ButtonOf("保存设置",true);var launch=Theme.ButtonOf("启动游戏");var logs=Theme.ButtonOf("查看日志");actions.Controls.AddRange(new Control[]{save,launch,toggle,logs});root.Controls.Add(actions,0,3);root.Controls.Add(status,0,4);
         aaTab.Click+=delegate{ShowTab(false);};uiTab.Click+=delegate{ShowTab(true);};backend.SelectedIndexChanged+=delegate{RefreshControls();};rule.SelectedIndexChanged+=delegate{RefreshControls();};
-        save.Click+=delegate{Run(delegate{Config.RequireStopped();decimal number;if(!decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)||number<0||number>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00，默认 0；需要时推荐 0.03 到 0.08。");sharp.Value=(int)Math.Round(number*100);Config.SetRule(rule.SelectedIndex,capture.Checked);Config.SelectBackend(backend.SelectedIndex,qualityIds[Math.Max(0,quality.SelectedIndex)],sharp.Value/100.0f,motionQuality.SelectedIndex);status.Text="设置已保存，下次启动游戏时生效。";status.ForeColor=Theme.Accent;});};
+        save.Click+=delegate{Run(delegate{Config.RequireStopped();decimal number;if(!decimal.TryParse(sharpValue.Text,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out number)||number<0||number>1)throw new ArgumentException("锐化强度可填写 0.00 到 1.00，默认 0；需要时推荐 0.03 到 0.08。");sharp.Value=(int)Math.Round(number*100);Config.SetRule(rule.SelectedIndex,capture.Checked);Config.Set(Config.PathOf("KuroUI.ini"),"KuroUI",new Dictionary<string,string>{{"PreviewVendorAA",preview.Checked?"1":"0"}});Config.SelectBackend(backend.SelectedIndex,qualityIds[Math.Max(0,quality.SelectedIndex)],sharp.Value/100.0f,motionQuality.SelectedIndex);status.Text="设置已保存，下次启动游戏时生效。";status.ForeColor=Theme.Accent;});};
         toggle.Click+=delegate{Run(delegate{Config.ToggleInjection(!File.Exists(Config.PathOf("dxgi.dll")));RefreshStatus();});};
         launch.Click+=delegate{Run(delegate{if(!File.Exists(Config.PathOf("ed9.exe")))throw new FileNotFoundException("未找到 ed9.exe，请把设置器放在游戏目录中。");Process.Start(new ProcessStartInfo(Config.PathOf("ed9.exe")){WorkingDirectory=Config.Root,UseShellExecute=true});});};
         logs.Click+=delegate{Run(delegate{string path=Config.PathOf("KuroUI.log");if(!File.Exists(path))path=Config.PathOf("AeonSR.log");if(!File.Exists(path))throw new FileNotFoundException("还没有运行日志，请先启动一次游戏。");Process.Start(path);});};
@@ -322,6 +328,7 @@ internal sealed class SettingsWindow : DarkForm
         int b=4,q=0,flow=1;if(a.ContainsKey("Upscaler")&&!int.TryParse(a["Upscaler"],out b))b=4;if(a.ContainsKey("UpscaleMode"))int.TryParse(a["UpscaleMode"],out q);if(a.ContainsKey("InternalFlowQuality"))int.TryParse(a["InternalFlowQuality"],out flow);
         backend.SelectedIndex=!Config.Flag(a,"Enabled",true)||b==3?3:b>=0&&b<3?b:4;int qualityIndex=Array.IndexOf(qualityIds,q);quality.SelectedIndex=qualityIndex>=0?qualityIndex:q==1&&qualityIds.Length>1?1:0;motionQuality.SelectedIndex=Math.Max(0,Math.Min(flow,1));
         capture.Checked=Config.Flag(s,"CaptureCandidates",false);
+        preview.Checked=Config.Flag(s,"PreviewVendorAA",false);
         rule.SelectedIndex=Config.ReadRule(s);
         decimal value=0m;if(a.ContainsKey("Sharpness"))decimal.TryParse(a["Sharpness"],System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out value);sharp.Value=(int)(Math.Max(0,Math.Min(1.00m,value))*100);
     }
@@ -336,6 +343,7 @@ internal sealed class SettingsWindow : DarkForm
         }
         bool vendor=backend.SelectedIndex>=0 && backend.SelectedIndex!=3;quality.Enabled=vendor;motionQuality.Enabled=vendor;sharp.Enabled=sharpValue.Enabled=vendor;
         rule.Enabled=vendor;sceneStatus.Text=rule.SelectedIndex==1?"0.3.1 shader 边界":rule.SelectedIndex==2?"全屏模式：UI 也参与 AA":"引擎 UI 边界保护";
+        preview.Enabled=vendor && rule.SelectedIndex!=2;
         sceneStatus.ForeColor=rule.SelectedIndex==2?Color.FromArgb(241,183,83):Theme.Accent;
     }
     private void RefreshStatus()
@@ -350,9 +358,11 @@ internal sealed class SettingsWindow : DarkForm
         aaTab.BackColor=ui?Theme.Background:Theme.Surface;uiTab.BackColor=ui?Theme.Surface:Theme.Background;
     }
     internal void SelectSceneTab() {ShowTab(true);}
+    internal void SelectSharpness(){ShowTab(false);sharp.Value=10;sharp.Focus();}
     internal void VerifyControls()
     {
         ((DarkCombo)backend).VerifyPopupBackground();((DarkCombo)quality).VerifyPopupBackground();((DarkCombo)motionQuality).VerifyPopupBackground();((DarkCombo)rule).VerifyPopupBackground();
+        sharpValue.VerifyBorder();
         for(int b=0;b<3;b++){
             backend.SelectedIndex=b;
             string native=b==0?"DLAA":"Native AA";
@@ -374,9 +384,10 @@ internal static class Program
     [STAThread] private static int Main(string[] args)
     {
         try {
-            if(args.Length==2 && (args[0]=="--render-test" || args[0]=="--render-scene-test")) {
+            if(args.Length==2 && (args[0]=="--render-test" || args[0]=="--render-scene-test" || args[0]=="--render-sharp-test")) {
                 Application.EnableVisualStyles();using(var form=new SettingsWindow()) {
                     if(args[0]=="--render-scene-test")form.SelectSceneTab();form.StartPosition=FormStartPosition.Manual;form.Location=new Point(-10000,-10000);form.ShowInTaskbar=false;form.Show();Application.DoEvents();form.PerformLayout();
+                    if(args[0]=="--render-sharp-test"){form.SelectSharpness();Application.DoEvents();form.PerformLayout();}
                     using(var bitmap=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(bitmap,new Rectangle(0,0,bitmap.Width,bitmap.Height));bitmap.Save(args[1],System.Drawing.Imaging.ImageFormat.Png);}form.Close();
                 }return 0;
             }
