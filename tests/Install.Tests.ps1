@@ -19,6 +19,19 @@ function Run-Settings([string[]]$arguments){
     if($p.ExitCode){throw 'Settings command failed.'}
 }
 Run-Settings @('--self-test')
+$ruleFile=Join-Path $root 'KuroAA\KuroUI.ini'
+if((Get-Content -LiteralPath $ruleFile -Raw) -notmatch '(?m)^AARule=engine'){throw 'Default engine rule missing.'}
+foreach($rule in @('engine','shader','full')){
+    Run-Settings @('--rule',$rule)
+    $ini=Get-Content -LiteralPath $ruleFile -Raw
+    if($ini -notmatch "(?m)^AARule=$rule\r?$"){throw 'Rule save failed.'}
+    if($rule -eq 'engine' -and ($ini -notmatch '(?m)^EngineUIFunctionRVA=37f480' -or $ini -notmatch '(?m)^EarlyUIShaderHash=0')){throw 'Engine rule isolation failed.'}
+    if($rule -eq 'shader' -and ($ini -notmatch '(?m)^EarlyUIShaderHash=23f7ff8def7a9871' -or $ini -notmatch '(?m)^EngineUIFunctionRVA=0')){throw 'Shader rule isolation failed.'}
+    if($rule -eq 'full' -and ($ini -notmatch '(?m)^EnableEarlyAA=0' -or $ini -notmatch '(?m)^SkipUnmatchedFrames=0')){throw 'Full-frame rule mapping failed.'}
+    Run-Settings @('--backend','fsr')
+    if((Get-Content -LiteralPath $ruleFile -Raw) -notmatch "(?m)^AARule=$rule\r?$"){throw 'Backend switch reset the rule.'}
+}
+Run-Settings @('--rule','engine')
 Run-Settings @('--disable')
 if(!(Test-Path -LiteralPath (Join-Path $root 'dxgi.dll.kuro-disabled'))){throw 'Disable failed.'}
 Run-Settings @('--enable')

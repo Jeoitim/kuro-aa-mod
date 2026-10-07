@@ -28,6 +28,8 @@ struct Command { uint64_t ps=0,vs=0; resource_view target{}; resource_view depth
 struct Pipeline { uint64_t hash=0; bool depth_test=true; };
 struct DrawStat { uint64_t shader=0,vertex_shader=0,target=0; unsigned width=0,height=0,format=0; bool depth=false; unsigned draws=0,vertices=0,first=0,last=0; std::string callers; };
 struct State {
+    enum class Rule { Legacy,Engine,Shader,Full };
+    Rule rule=Rule::Legacy;
     effect_runtime *runtime=nullptr;
     bool in_present=false,early=false,trace=false;
     uint64_t frame=0,early_count=0,early_hash=0,skipped_count=0;
@@ -67,21 +69,26 @@ void load_profile(State &s)
 {
     wchar_t hash[64]{};
     const auto ini=(root / "KuroUI.ini").wstring();
+    wchar_t rule[32]{};GetPrivateProfileStringW(L"KuroUI",L"AARule",L"",rule,32,ini.c_str());
+    s.rule=!_wcsicmp(rule,L"full") ? State::Rule::Full : !_wcsicmp(rule,L"shader") ? State::Rule::Shader
+        : rule[0] ? State::Rule::Engine : State::Rule::Legacy;
     s.early_requested=GetPrivateProfileIntW(L"KuroUI",L"EnableEarlyAA",0,ini.c_str()) != 0;
+    if(s.rule!=State::Rule::Legacy)s.early_requested=s.rule!=State::Rule::Full;
     GetPrivateProfileStringW(L"KuroUI",L"EarlyUIShaderHash",L"0",hash,64,ini.c_str());
-    s.early_hash=GetPrivateProfileIntW(L"KuroUI",L"EnableEarlyAA",0,ini.c_str()) ? std::wcstoull(hash,nullptr,16) : 0;
+    s.early_hash=s.early_requested && (s.rule==State::Rule::Legacy || s.rule==State::Rule::Shader) ? std::wcstoull(hash,nullptr,16) : 0;
     GetPrivateProfileStringW(L"KuroUI",L"EarlyUIVertexShaderHash",L"0",hash,64,ini.c_str()); s.early_vs=std::wcstoull(hash,nullptr,16);
     s.allow_offscreen=GetPrivateProfileIntW(L"KuroUI",L"AllowOffscreenTarget",0,ini.c_str()) != 0;
     s.skip_unmatched=GetPrivateProfileIntW(L"KuroUI",L"SkipUnmatchedFrames",1,ini.c_str()) != 0;
+    if(s.rule!=State::Rule::Legacy)s.skip_unmatched=s.rule!=State::Rule::Full;
     s.capture_candidates=GetPrivateProfileIntW(L"KuroUI",L"CaptureCandidates",0,ini.c_str()) != 0;
     s.trace=GetPrivateProfileIntW(L"KuroUI",L"TraceDraws",0,ini.c_str()) != 0;
     s.trace_callers=GetPrivateProfileIntW(L"KuroUI",L"TraceEngineCallers",0,ini.c_str()) != 0;
     s.engine_ui=0;
-    s.engine_requested=false;
-    if(GetPrivateProfileIntW(L"KuroUI",L"EnableEarlyAA",0,ini.c_str())){
+    s.engine_requested=s.rule==State::Rule::Engine;
+    if(s.early_requested && (s.rule==State::Rule::Engine || s.rule==State::Rule::Legacy)){
         GetPrivateProfileStringW(L"KuroUI",L"EngineUIFunctionRVA",L"0",hash,64,ini.c_str());
         const uint64_t rva=std::wcstoull(hash,nullptr,16);
-        s.engine_requested=rva!=0;
+        s.engine_requested=s.engine_requested || rva!=0;
         GetPrivateProfileStringW(L"KuroUI",L"EngineUIFunctionHash",L"0",hash,64,ini.c_str());
         const uint64_t expected=std::wcstoull(hash,nullptr,16);
         const uintptr_t base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
@@ -112,6 +119,8 @@ void on_init(effect_runtime *runtime)
     states[runtime]=std::move(state);
     note("Kuro AA: DX11 scene integration initialized.");
     note("Kuro AA: validated engine UI boundary="+std::to_string(states[runtime]->engine_ui));
+    const auto rule=states[runtime]->rule;
+    note(std::string("Kuro AA: AA rule=")+(rule==State::Rule::Engine?"engine":rule==State::Rule::Shader?"shader":rule==State::Rule::Full?"full":"legacy config"));
 }
 void on_destroy(effect_runtime *runtime)
 {

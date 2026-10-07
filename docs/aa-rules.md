@@ -1,5 +1,16 @@
 # AA 触发规则说明
 
+管理面板提供三种互斥规则，默认“引擎边界”。保存后重新启动游戏生效，切换后端不改变规则。
+
+| 管理面板 | KuroUI.ini | 处理位置 |
+| --- | --- | --- |
+| 引擎边界（推荐） | AARule=engine | 经校验的引擎 UI 提交前 |
+| Shader 签名（0.3.1） | AARule=shader | 匹配的 UI shader draw 前 |
+| 无规则（全屏 AA） | AARule=full | Present 最终画面，包含 UI |
+
+显式 AARule 决定实际路径，切换时清除另一规则的入口参数，避免混用。
+未带 AARule 的旧配置仍可读取，以便开发夹具和既有安装迁移。
+
 ## 0.3.1：Shader 签名
 
 `EarlyUIShaderHash` 和 `EarlyUIVertexShaderHash` 是 shader 字节码的指纹，
@@ -38,3 +49,9 @@ UI 首批位于辅助纹理时，也可先处理缓存场景。UI 开始后封�
 长期完整支持需要捕获该视图的渲染完成出口，并为不同相机维护独立颜色 / 深度 / 光流及厂商历史。
 当前 ReShade 每帧一次处理与 AeonSR 单套历史不能直接用于多个视图重复重建。
 关闭规则可用于 A/B 判断最终画面处理是否能改善预览，但会失去 UI 保护，不作为默认建议。
+
+也可以为独立角色视图做专门的空间 AA 或更高分辨率渲染后缩回 UI 区域，避免与主相机共享时域历史。
+这需要同时适配该视图的颜色 / 深度目标与 viewport，不是已经完成的功能。
+若选择 MSAA 路线，颜色和深度采样数必须一致，并需解析为单采样纹理供后续合成。
+参考 [Microsoft 的深度配置说明](https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-depth-stencil)
+和 [ResolveSubresource](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-resolvesubresource)。
