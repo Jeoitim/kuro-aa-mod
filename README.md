@@ -39,7 +39,7 @@
 
 原生抗锯齿模式固定为 DLAA 或 Native AA。标准／高只调整运动估计质量，不改变渲染分辨率。锐化可填 0.00–1.00，步长 0.01；过高容易出现亮边，不能靠它消除残影。
 
-通常保持屏幕原生分辨率即可。Mod 按实际场景纹理尺寸处理，不限于 1080p；1440p、4K 会增加处理和显存开销，尚未完成所有游戏场景的验收。详见 [分辨率说明](docs/resolution.md)。
+通常保持屏幕原生分辨率即可。Mod 按实际场景纹理尺寸处理，不限于 1080p；1440p、4K 会增加处理和显存开销，尚未完成所有游戏场景的验收。详见 [分辨率说明](docs/user/resolution.md)。
 
 ### 场景与界面
 
@@ -51,11 +51,11 @@
 | Shader 签名 | 在识别到界面着色器前处理场景；部分界面可能无法识别 |
 | 全屏 AA | 处理最终画面，覆盖场景和界面；文字可能模糊、变形或残影 |
 
-全屏 AA 仍是抗锯齿。关闭效果请在算法列表中选择“关闭”。详见 [规则说明](docs/aa-rules.md)。
+全屏 AA 仍是抗锯齿。关闭效果请在算法列表中选择“关闭”。详见 [规则说明](docs/user/aa-rules.md)。
 
 装备、换装页的独立角色模型默认不单独处理。勾选“角色界面抗锯齿（实验）”后，模型使用独立的原生 AA，文字保持隔离。进入面板或切换角色仍可能明显停顿，建议先保持关闭。全屏 AA 不再叠加这项处理。
 
-0.4.1 包含角色缓存预算、数量上限、可用显存保护，以及着色器编译缓存和启动预热。它们减少部分重复准备工作，不能保证完全无卡顿。详见 [角色说明](docs/vendor-preview.md) 和 [缓存设置](docs/cache-settings.md)。
+0.4.1 包含角色缓存预算、数量上限、可用显存保护，以及着色器编译缓存和启动预热。它们减少部分重复准备工作，不能保证完全无卡顿。详见 [角色说明](docs/user/vendor-preview.md) 和 [缓存设置](docs/user/cache-settings.md)。
 
 ## 画质与性能
 
@@ -78,8 +78,14 @@
 
 脚本保留存档、日志和未知文件；改动过的二进制不会直接删除。
 
+## 参与适配与优化
+
+欢迎贡献者参与《黎之轨迹 II》云豹版适配，或改进现有原生 AA 的界面保护、角色处理和加载开销。函数边界定位、shader 哈希与资源流记录、可复现的问题报告也能帮助适配。
+
+开始前请读 [文档导航](docs/README.md)、[二代适配清单](docs/adaptation/kuro2-checklist.md) 和 [贡献指南](CONTRIBUTING.md)。完成验证后欢迎提交 PR，并写明游戏版本、复现步骤、验证结果和仍有的问题。
+
 ## 开发与许可
 
-开发说明见 [构建](docs/building.md)、[架构](docs/algorithm.md)、[验证记录](docs/validation.md) 与 [调试](docs/debugging.md)。后续计划适配二代的界面保护，并继续优化角色处理的初始化开销，尚无确定发布日期。
+开发说明见 [构建](docs/development/building.md)、[架构](docs/development/architecture.md)、[验证记录](docs/validation/native-aa.md) 与 [调试](docs/development/debugging.md)。后续计划适配二代的界面保护，并继续优化角色处理的初始化开销，尚无确定发布日期。
 
 原创代码采用 MIT。第三方组件遵循随附许可，请保留 `Licenses`。本包基于 [AeonSR v1.0.1](https://github.com/BarbatosAWLS/AeonSR/releases/tag/v1.0.1) 与 [ReShade 6.8.0](https://reshade.me/)，包含原生 AA 限定和独立角色视图扩展。

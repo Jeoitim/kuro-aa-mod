@@ -25,7 +25,7 @@ AeonSR 固定于 commit `8e8456848557d6e7282db3451473531a392209da`，应用 `too
 ./tests/Install.Tests.ps1 -PackageDirectory ./dist/GameFiles -OutputDirectory ./build/install-test
 ```
 
-画质与性能仍需实际游戏确认，不能把夹具输出差异当作抗锯齿质量分数。测试设备说明与结果见 [验证记录](validation.md)。
+画质与性能仍需实际游戏确认，不能把夹具输出差异当作抗锯齿质量分数。测试设备说明与结果见 [验证记录](../validation/native-aa.md)。
 
 ## 文件来源
 
